@@ -1,0 +1,38 @@
+openapi: 3.1.0
+info:
+  title: AI Inference Gateway
+  version: 0.1.0
+  description: OpenAI-shaped chat completions edge for multi-cloud LLM routing.
+servers:
+  - url: http://localhost:18080
+paths:
+  /health:
+    get:
+      summary: Gateway health
+      responses:
+        "200":
+          description: OK
+  /v1/chat/completions:
+    post:
+      summary: Create a chat completion
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/chat-completion.request.json"
+      responses:
+        "200":
+          description: Completion
+        "401":
+          description: Missing or invalid API key
+        "502":
+          description: Upstream router / provider error
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

@@ -1,0 +1,50 @@
+services:
+  redis:
+    image: redis:7-alpine
+    # Not published to the host by default (avoids clashing with other local Redis).
+    # Use `docker compose exec redis redis-cli` for debugging, or add "6380:6379".
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  router:
+    build:
+      context: ./apps/router
+    ports:
+      - "${ROUTER_HOST_PORT:-18081}:8081"
+    environment:
+      PROVIDER_MODE: ${PROVIDER_MODE:-mock}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PORT: "8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+
+  gateway:
+    build:
+      context: ./apps/gateway
+    ports:
+      - "${GATEWAY_HOST_PORT:-18080}:8080"
+    environment:
+      DEMO_API_KEY: ${DEMO_API_KEY:-demo-key-change-me}
+      ROUTER_URL: ${ROUTER_URL:-http://router:8081}
+      PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      router:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s

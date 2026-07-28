@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.turbo/
+.next/
+.pnpm-store/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / runtime
+*.log
+logs/
+tmp/
+.cache/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+*.pem
+credentials.json
+service-account*.json
+
+# Build artifacts
+*.tsbuildinfo
+coverage/
+
+# Planning / agent docs (local only — do not commit)
+plan.md
+AGENTS.md
+list.md
+agent.md
