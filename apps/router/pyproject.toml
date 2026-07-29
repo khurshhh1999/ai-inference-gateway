@@ -23,6 +23,16 @@ dev = [
   "pytest-asyncio>=0.24.0",
   "ruff>=0.8.0",
 ]
+bedrock = [
+  "boto3>=1.35.0",
+]
+vertex = [
+  "google-cloud-aiplatform>=1.70.0",
+]
+cloud = [
+  "boto3>=1.35.0",
+  "google-cloud-aiplatform>=1.70.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

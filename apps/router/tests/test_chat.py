@@ -1,9 +1,19 @@
+from __future__ import annotations
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models import ChatCompletionRequest, ChatMessage
+from app.providers import reset_routing_engine
 from app.providers.mock import MockProvider
+
+
+@pytest.fixture(autouse=True)
+def _reset_engine() -> None:
+    reset_routing_engine()
+    yield
+    reset_routing_engine()
 
 
 @pytest.fixture
@@ -17,7 +27,8 @@ def test_health(client: TestClient) -> None:
     body = res.json()
     assert body["status"] == "ok"
     assert body["service"] == "router"
-    assert body["provider"] == "mock"
+    assert body["providers"]["mock"] is True
+    assert "routing_policy" in body
 
 
 def test_chat_completions_mock(client: TestClient) -> None:
@@ -33,6 +44,7 @@ def test_chat_completions_mock(client: TestClient) -> None:
     assert body["object"] == "chat.completion"
     assert body["provider"] == "mock"
     assert body["cached"] is False
+    assert body["route_reason"] in {"failover", "cost", "latency", "affinity"}
     assert "hello gateway" in body["choices"][0]["message"]["content"]
     assert body["usage"]["total_tokens"] >= 2
 
@@ -68,3 +80,10 @@ async def test_mock_provider_direct() -> None:
     )
     assert result.provider == "mock"
     assert "ping" in result.choices[0].message.content
+    estimate = provider.estimate_cost(
+        ChatCompletionRequest(
+            model="mock-small",
+            messages=[ChatMessage(role="user", content="ping")],
+        )
+    )
+    assert estimate.total_usd == 0.0

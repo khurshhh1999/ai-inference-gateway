@@ -36,7 +36,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see load results as th
 |---------|--------|
 | OpenAI-shaped `POST /v1/chat/completions` | Done (Step 1) |
 | Mock provider for local / CI (no cloud keys) | Done |
-| Multi-provider routing (Bedrock + Vertex) + failover | Planned (Step 2) |
+| Multi-provider routing (Bedrock + Vertex) + failover | Done (Step 2) |
 | Semantic response cache (Redis) | Planned |
 | SSE token streaming | Planned |
 | Per-tenant API keys + USD/token budgets | Planned |
@@ -97,6 +97,11 @@ Copy `.env.example` → `.env`. Important variables:
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `PROVIDER_MODE` | `mock` | `mock` \| `bedrock` \| `vertex` \| `multi` |
+| `ROUTING_POLICY` | `failover` | `prefer_cost` \| `prefer_latency` \| `prefer_provider` \| `failover` |
+| `ROUTING_PRIMARY` | `bedrock` | First provider for affinity / failover |
+| `ROUTING_FALLBACK` | `vertex,mock` | Ordered failover chain after primary |
+| `PROVIDER_TIMEOUT_MS` | `5000` | Per-provider call timeout |
+| `MODEL_MAP` | (see `.env.example`) | Logical model → provider-specific ids |
 | `DEMO_API_KEY` | `demo-key-change-me` | Gateway API key for local demos |
 | `REDIS_URL` | `redis://redis:6379/0` | Cache / budget store |
 | `ROUTER_URL` | `http://router:8081` | Gateway → router (Compose) |
@@ -104,7 +109,9 @@ Copy `.env.example` → `.env`. Important variables:
 | `ROUTER_HOST_PORT` | `18081` | Host port for the router |
 
 Cloud credentials (Bedrock / Vertex) are optional and only required when
-`PROVIDER_MODE` is not `mock`.
+`PROVIDER_MODE` is `bedrock`, `vertex`, or `multi` and you want real cloud calls.
+With `PROVIDER_MODE=multi` and no creds, cloud adapters fail and the router
+failsover to `mock` (local/CI stays green).
 
 ## Development
 
@@ -125,8 +132,8 @@ npm run dev
 
 ## Roadmap (high level)
 
-1. Foundation + mock providers  
-2. Bedrock / Vertex adapters + routing policies  
+1. Foundation + mock providers ✅  
+2. Bedrock / Vertex adapters + routing policies ✅  
 3. Semantic caching  
 4. Streaming  
 5. Tenant budgets  

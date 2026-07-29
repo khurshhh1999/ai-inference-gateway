@@ -45,3 +45,4 @@ class ChatCompletionResponse(BaseModel):
     usage: Usage
     provider: str
     cached: bool = False
+    route_reason: str | None = None
