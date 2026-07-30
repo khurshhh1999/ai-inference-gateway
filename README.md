@@ -37,7 +37,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see load results as th
 | OpenAI-shaped `POST /v1/chat/completions` | Done (Step 1) |
 | Mock provider for local / CI (no cloud keys) | Done |
 | Multi-provider routing (Bedrock + Vertex) + failover | Done (Step 2) |
-| Semantic response cache (Redis) | Planned |
+| Semantic response cache (Redis) | Done (Step 3) |
 | SSE token streaming | Planned |
 | Per-tenant API keys + USD/token budgets | Planned |
 | Prometheus metrics + k6 load evidence | Planned |
@@ -77,7 +77,23 @@ curl -s http://localhost:18080/v1/chat/completions \
 ```bash
 curl -s http://localhost:18080/health
 curl -s http://localhost:18081/health
+curl -s http://localhost:18081/v1/cache/stats
 ```
+
+### Semantic cache demo
+
+Near-duplicate prompts (same tenant + model family) return a cached completion
+when similarity ≥ `CACHE_SIMILARITY_THRESHOLD` (default `0.90`: max of embedding
+cosine and string near-duplicate ratio). Scope the cache with `X-Tenant-Id`
+(default `default`); skip with `X-Cache-Bypass: 1`.
+
+```bash
+chmod +x scripts/demo_semantic_cache.sh
+./scripts/demo_semantic_cache.sh
+```
+
+The script prints per-request `cached` / `route_reason` and router stats
+(`cache_hit_total`, `cache_miss_total`, `estimated_usd_saved`).
 
 ## Project layout
 
@@ -104,6 +120,11 @@ Copy `.env.example` → `.env`. Important variables:
 | `MODEL_MAP` | (see `.env.example`) | Logical model → provider-specific ids |
 | `DEMO_API_KEY` | `demo-key-change-me` | Gateway API key for local demos |
 | `REDIS_URL` | `redis://redis:6379/0` | Cache / budget store |
+| `CACHE_ENABLED` | `true` | Semantic response cache |
+| `CACHE_SIMILARITY_THRESHOLD` | `0.90` | Min similarity (embedding cosine or string ratio) |
+| `CACHE_TTL_SECONDS` | `3600` | Entry TTL |
+| `CACHE_MAX_ENTRIES` | `1000` | Per tenant+model family cap |
+| `CACHE_EMBEDDING_PROVIDER` | `hashing` | `hashing` \| `sentence-transformers` |
 | `ROUTER_URL` | `http://router:8081` | Gateway → router (Compose) |
 | `GATEWAY_HOST_PORT` | `18080` | Host port for the gateway |
 | `ROUTER_HOST_PORT` | `18081` | Host port for the router |
@@ -134,7 +155,7 @@ npm run dev
 
 1. Foundation + mock providers ✅  
 2. Bedrock / Vertex adapters + routing policies ✅  
-3. Semantic caching  
+3. Semantic caching ✅  
 4. Streaming  
 5. Tenant budgets  
 6. Observability + load proof  

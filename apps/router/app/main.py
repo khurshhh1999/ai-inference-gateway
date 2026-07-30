@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from app.api.chat import router as chat_router
+from app.cache.semantic import get_semantic_cache
 from app.config import settings
 from app.providers import get_routing_engine
 
@@ -13,7 +14,7 @@ logging.basicConfig(level=settings.log_level.upper())
 
 app = FastAPI(
     title="AI Inference Router",
-    version="0.2.0",
+    version="0.3.0",
     description="Routing engine for the AI Inference Gateway",
 )
 
@@ -24,7 +25,15 @@ app.include_router(chat_router)
 async def health() -> JSONResponse:
     engine = get_routing_engine()
     provider_health = await engine.health()
-    ok = any(provider_health.values()) if provider_health else False
+    cache_ok = True
+    if settings.cache_enabled:
+        try:
+            cache_ok = await get_semantic_cache().ping()
+        except Exception:  # noqa: BLE001
+            cache_ok = False
+    ok = (any(provider_health.values()) if provider_health else False) and (
+        cache_ok or not settings.cache_enabled
+    )
     return JSONResponse(
         {
             "status": "ok" if ok else "degraded",
@@ -32,5 +41,10 @@ async def health() -> JSONResponse:
             "provider_mode": settings.provider_mode,
             "routing_policy": settings.routing_policy,
             "providers": provider_health,
+            "cache": {
+                "enabled": settings.cache_enabled,
+                "healthy": cache_ok,
+                "similarity_threshold": settings.cache_similarity_threshold,
+            },
         }
     )

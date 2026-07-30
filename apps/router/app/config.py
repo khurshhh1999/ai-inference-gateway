@@ -89,6 +89,16 @@ class Settings(BaseSettings):
         "gemini-flash=vertex:gemini-1.5-flash"
     )
 
+    # Semantic cache (Step 3)
+    cache_enabled: bool = True
+    cache_similarity_threshold: float = 0.90
+    cache_ttl_seconds: int = 3600
+    cache_max_entries: int = 1000
+    cache_embedding_provider: str = "hashing"  # hashing | sentence-transformers
+    cache_embedding_dim: int = 256
+    # Fallback USD/request used for mock (zero list price) so demos still show $ saved
+    cache_mock_savings_usd: float = 0.002
+
     # Cloud (optional — only needed when calling real Bedrock / Vertex)
     aws_region: str = "us-east-1"
     google_cloud_project: str = ""

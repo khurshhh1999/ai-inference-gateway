@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AI Inference Gateway
-  version: 0.1.0
+  version: 0.3.0
   description: OpenAI-shaped chat completions edge for multi-cloud LLM routing.
 servers:
   - url: http://localhost:18080
@@ -17,6 +17,9 @@ paths:
       summary: Create a chat completion
       security:
         - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/CacheBypass"
       requestBody:
         required: true
         content:
@@ -25,12 +28,29 @@ paths:
               $ref: "./schemas/chat-completion.request.json"
       responses:
         "200":
-          description: Completion
+          description: Completion (cached=true on semantic cache hit)
         "401":
           description: Missing or invalid API key
         "502":
           description: Upstream router / provider error
 components:
+  parameters:
+    TenantId:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      description: Tenant namespace for the semantic cache (default "default")
+      schema:
+        type: string
+        default: default
+    CacheBypass:
+      name: X-Cache-Bypass
+      in: header
+      required: false
+      description: Set to "1" to skip semantic cache read/write
+      schema:
+        type: string
+        enum: ["1", "true"]
   securitySchemes:
     ApiKeyAuth:
       type: apiKey

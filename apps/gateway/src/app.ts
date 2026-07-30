@@ -48,11 +48,23 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
       });
     }
 
+    const forwardHeaders: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    const tenantId = request.headers["x-tenant-id"];
+    if (typeof tenantId === "string" && tenantId.length > 0) {
+      forwardHeaders["x-tenant-id"] = tenantId;
+    }
+    const cacheBypass = request.headers["x-cache-bypass"];
+    if (typeof cacheBypass === "string" && cacheBypass.length > 0) {
+      forwardHeaders["x-cache-bypass"] = cacheBypass;
+    }
+
     let upstream: Response;
     try {
       upstream = await fetch(`${config.routerUrl}/v1/chat/completions`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: forwardHeaders,
         body: JSON.stringify(body),
       });
     } catch (err) {
