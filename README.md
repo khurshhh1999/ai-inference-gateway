@@ -198,16 +198,6 @@ npm test
 npm run dev
 ```
 
-## Roadmap (high level)
-
-1. Foundation + mock providers ✅  
-2. Bedrock / Vertex adapters + routing policies ✅  
-3. Semantic caching ✅  
-4. Streaming ✅  
-5. Tenant budgets ✅  
-6. Observability + load proof  
-7. Multi-cloud deploy docs  
-
 ## License
 
 MIT
