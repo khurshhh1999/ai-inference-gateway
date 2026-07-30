@@ -1,7 +1,7 @@
 # AI Inference Router
 
 FastAPI service that selects a provider, talks to Bedrock / Vertex / mock adapters,
-and (in later steps) owns semantic caching and tenant budgets.
+owns semantic caching, and enforces per-tenant USD/token budgets.
 
 ## Step 2 — routing
 
@@ -14,6 +14,14 @@ and (in later steps) owns semantic caching and tenant budgets.
 
 Responses include `provider` and `route_reason` (`cost` / `latency` / `affinity` / `failover`).
 Route decisions are also logged.
+
+## Step 5 — budgets
+
+- Redis counters: USD + tokens per minute/day/month (`budget:{tenant}:…`)
+- Soft warning (`X-Budget-Warning: soft`) at `BUDGET_SOFT_RATIO`; hard reject with
+  `BUDGET_HARD_STATUS` (default 402)
+- Admin: `GET /v1/tenants/{id}/usage`, `GET /v1/tenants/{id}/budget`
+- Spend events logged as structured `spend_audit` lines
 
 Optional extras: `pip install -e ".[bedrock]"`, `".[vertex]"`, or `".[cloud]"`.
 

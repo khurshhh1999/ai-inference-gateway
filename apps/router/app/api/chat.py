@@ -3,9 +3,11 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
+from app.budget.meter import BudgetExceededError, get_budget_meter
+from app.budget.pricing import billable_cost_usd
 from app.cache.metrics import cache_metrics
 from app.cache.semantic import (
     estimate_response_cost_usd,
@@ -43,10 +45,31 @@ def _all_providers_failed_http(exc: AllProvidersFailedError) -> HTTPException:
     )
 
 
+def _budget_exceeded_http(exc: BudgetExceededError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={
+            "error": "budget_exceeded",
+            "message": str(exc),
+            "tenant": exc.tenant,
+            "window": exc.window,
+            "metric": exc.metric,
+            "used": exc.used,
+            "limit": exc.limit,
+        },
+    )
+
+
+def _apply_budget_headers(response: Response, *, soft_warning: bool) -> None:
+    if soft_warning:
+        response.headers["X-Budget-Warning"] = "soft"
+
+
 @router.post("/v1/chat/completions", response_model=None)
 async def chat_completions(
     body: ChatCompletionRequest,
     request: Request,
+    response: Response,
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     x_cache_bypass: str | None = Header(default=None, alias="X-Cache-Bypass"),
 ) -> ChatCompletionResponse | StreamingResponse:
@@ -73,6 +96,13 @@ async def chat_completions(
         if hit is not None:
             return hit.response
 
+    meter = get_budget_meter()
+    try:
+        check = await meter.check(tenant)
+    except BudgetExceededError as exc:
+        raise _budget_exceeded_http(exc) from exc
+    _apply_budget_headers(response, soft_warning=check.soft_warning)
+
     engine = get_routing_engine()
     try:
         decision = await engine.complete(body)
@@ -80,16 +110,22 @@ async def chat_completions(
         logger.error("all providers failed attempts=%s", exc.attempts)
         raise _all_providers_failed_http(exc) from exc
 
-    response = decision.response
+    completion = decision.response
+    await _meter_completion(
+        tenant=tenant,
+        model=body.model,
+        response=completion,
+        provider=decision.provider,
+    )
     await _maybe_store_cache(
         tenant=tenant,
         model=body.model,
         prompt=prompt,
-        response=response,
+        response=completion,
         provider=decision.provider,
         bypass=bypass,
     )
-    return response
+    return completion
 
 
 async def _stream_completions(
@@ -134,6 +170,12 @@ async def _stream_completions(
                 headers=_sse_headers(),
             )
 
+    meter = get_budget_meter()
+    try:
+        check = await meter.check(tenant)
+    except BudgetExceededError as exc:
+        raise _budget_exceeded_http(exc) from exc
+
     engine = get_routing_engine()
     try:
         route = await engine.open_stream(body)
@@ -166,9 +208,9 @@ async def _stream_completions(
         finally:
             await route.aclose()
 
-        if completed and accumulated and not bypass:
+        if completed and accumulated:
             prompt_tokens = max(1, sum(len(m.content.split()) for m in body.messages))
-            response = build_completion_from_stream(
+            completion = build_completion_from_stream(
                 completion_id=route.completion_id,
                 created=route.created,
                 model=route.model,
@@ -177,19 +219,29 @@ async def _stream_completions(
                 prompt_tokens=prompt_tokens,
                 route_reason=route.reason,
             )
-            await _maybe_store_cache(
+            await _meter_completion(
                 tenant=tenant,
                 model=body.model,
-                prompt=prompt,
-                response=response,
+                response=completion,
                 provider=route.provider,
-                bypass=bypass,
             )
+            if not bypass:
+                await _maybe_store_cache(
+                    tenant=tenant,
+                    model=body.model,
+                    prompt=prompt,
+                    response=completion,
+                    provider=route.provider,
+                    bypass=bypass,
+                )
 
+    headers = _sse_headers()
+    if check.soft_warning:
+        headers["X-Budget-Warning"] = "soft"
     return StreamingResponse(
         _provider_events(),
         media_type="text/event-stream",
-        headers=_sse_headers(),
+        headers=headers,
     )
 
 
@@ -199,6 +251,36 @@ def _sse_headers() -> dict[str, str]:
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
     }
+
+
+async def _meter_completion(
+    *,
+    tenant: str,
+    model: str,
+    response: ChatCompletionResponse,
+    provider: str,
+) -> None:
+    meter = get_budget_meter()
+    if not meter.enabled:
+        return
+    usd = billable_cost_usd(
+        provider=provider,
+        model=model,
+        prompt_tokens=response.usage.prompt_tokens,
+        completion_tokens=response.usage.completion_tokens,
+        settings=settings,
+    )
+    tokens = response.usage.total_tokens
+    try:
+        await meter.record(
+            tenant=tenant,
+            usd=usd,
+            tokens=tokens,
+            provider=provider,
+            model=model,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("budget record failed tenant=%s model=%s", tenant, model)
 
 
 async def _maybe_store_cache(
@@ -243,4 +325,28 @@ async def cache_stats() -> dict:
         "ttl_seconds": cache.ttl_seconds,
         "max_entries": cache.max_entries,
         **cache_metrics.as_dict(),
+    }
+
+
+@router.get("/v1/tenants/{tenant_id}/usage")
+async def tenant_usage(tenant_id: str) -> dict:
+    """Usage summary + remaining budget for minute/day/month windows."""
+    tenant = tenant_id.strip() or "default"
+    meter = get_budget_meter()
+    status = await meter.usage(tenant)
+    return status.as_dict()
+
+
+@router.get("/v1/tenants/{tenant_id}/budget")
+async def tenant_budget(tenant_id: str) -> dict:
+    """Configured soft/hard limits for a tenant."""
+    tenant = tenant_id.strip() or "default"
+    meter = get_budget_meter()
+    limits = meter.limits_for(tenant)
+    return {
+        "tenant": tenant,
+        "enabled": meter.enabled,
+        "soft_ratio": settings.budget_soft_ratio,
+        "hard_status": meter.hard_status,
+        "limits": limits,
     }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { buildServer } from "../src/app.js";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, parseTenantApiKeys } from "../src/config.js";
 
 describe("gateway", () => {
   let app: FastifyInstance;
@@ -77,6 +77,91 @@ describe("gateway", () => {
     assert.equal(res.json().choices[0].message.content, "hello");
   });
 
+  it("forwards tenant from API key map (ignores client X-Tenant-Id)", async () => {
+    let sawTenant: string | null = null;
+    globalThis.fetch = (async (_input, init) => {
+      const headers = init?.headers as Record<string, string>;
+      sawTenant = headers["x-tenant-id"] ?? null;
+      return new Response(
+        JSON.stringify({
+          id: "c1",
+          object: "chat.completion",
+          created: 1,
+          model: "mock-small",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          provider: "mock",
+          cached: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const keyed = await buildServer(
+      loadConfig({
+        PORT: "0",
+        ROUTER_URL: "http://router.test",
+        TENANT_API_KEYS: "acme-key:acme,demo-key-change-me:default",
+        LOG_LEVEL: "silent",
+      }),
+    );
+    await keyed.ready();
+    try {
+      const res = await keyed.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        headers: {
+          "x-api-key": "acme-key",
+          "x-tenant-id": "spoofed",
+        },
+        payload: {
+          model: "mock-small",
+          messages: [{ role: "user", content: "hi" }],
+        },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(sawTenant, "acme");
+    } finally {
+      await keyed.close();
+    }
+  });
+
+  it("proxies 402 budget errors from the router", async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          detail: {
+            error: "budget_exceeded",
+            message: "Tenant 'acme' exceeded usd day budget",
+            tenant: "acme",
+            window: "day",
+            metric: "usd",
+            used: 1,
+            limit: 1,
+          },
+        }),
+        { status: 402, headers: { "content-type": "application/json" } },
+      )) as typeof fetch;
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { "x-api-key": "demo-key-change-me" },
+      payload: {
+        model: "mock-small",
+        messages: [{ role: "user", content: "hi" }],
+      },
+    });
+    assert.equal(res.statusCode, 402);
+    assert.equal(res.json().detail.error, "budget_exceeded");
+  });
+
   it("proxies SSE streams without buffering JSON", async () => {
     const sse =
       'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"mock-small","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}],"provider":"mock"}\n\n' +
@@ -112,5 +197,16 @@ describe("gateway", () => {
     assert.match(res.body, /"content":"hi"/);
     // Must not have been parsed/re-serialized as a single JSON object.
     assert.equal(res.headers["content-type"]?.includes("application/json"), false);
+  });
+});
+
+describe("parseTenantApiKeys", () => {
+  it("parses compact and JSON maps", () => {
+    assert.deepEqual(parseTenantApiKeys("a:alpha,b:beta"), {
+      a: "alpha",
+      b: "beta",
+    });
+    assert.deepEqual(parseTenantApiKeys('{"k":"t"}'), { k: "t" });
+    assert.deepEqual(parseTenantApiKeys(""), {});
   });
 });

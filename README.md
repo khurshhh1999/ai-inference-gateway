@@ -39,7 +39,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see load results as th
 | Multi-provider routing (Bedrock + Vertex) + failover | Done (Step 2) |
 | Semantic response cache (Redis) | Done (Step 3) |
 | SSE token streaming | Done (Step 4) |
-| Per-tenant API keys + USD/token budgets | Planned |
+| Per-tenant API keys + USD/token budgets | Done (Step 5) |
 | Prometheus metrics + k6 load evidence | Planned |
 
 ## Quick start
@@ -101,6 +101,22 @@ chmod +x scripts/demo_streaming.sh
 curl -s http://localhost:18080/health
 curl -s http://localhost:18081/health
 curl -s http://localhost:18081/v1/cache/stats
+curl -s http://localhost:18081/v1/tenants/default/usage
+curl -s http://localhost:18081/v1/tenants/default/budget
+```
+
+### Per-tenant budgets
+
+Gateway API keys map to tenants (`TENANT_API_KEYS=key:tenant,...`; default
+`DEMO_API_KEY` → `default`). The router meters USD + tokens in Redis per
+minute/day/month window using config-driven pricing (provider rates, optional
+per-model overrides; mock uses `BUDGET_MOCK_USD`). Soft threshold
+(`BUDGET_SOFT_RATIO`) sets `X-Budget-Warning: soft`; hard limit returns
+`BUDGET_HARD_STATUS` (default **402**). Cache hits do not increment spend.
+
+```bash
+chmod +x scripts/demo_budgets.sh
+./scripts/demo_budgets.sh
 ```
 
 ### Semantic cache demo
@@ -141,13 +157,21 @@ Copy `.env.example` → `.env`. Important variables:
 | `ROUTING_FALLBACK` | `vertex,mock` | Ordered failover chain after primary |
 | `PROVIDER_TIMEOUT_MS` | `5000` | Per-provider call timeout |
 | `MODEL_MAP` | (see `.env.example`) | Logical model → provider-specific ids |
-| `DEMO_API_KEY` | `demo-key-change-me` | Gateway API key for local demos |
+| `DEMO_API_KEY` | `demo-key-change-me` | Gateway API key (maps to tenant `default` if `TENANT_API_KEYS` unset) |
+| `TENANT_API_KEYS` | (empty) | `key:tenant,...` map for multi-tenant auth |
 | `REDIS_URL` | `redis://redis:6379/0` | Cache / budget store |
 | `CACHE_ENABLED` | `true` | Semantic response cache |
 | `CACHE_SIMILARITY_THRESHOLD` | `0.90` | Min similarity (embedding cosine or string ratio) |
 | `CACHE_TTL_SECONDS` | `3600` | Entry TTL |
 | `CACHE_MAX_ENTRIES` | `1000` | Per tenant+model family cap |
 | `CACHE_EMBEDDING_PROVIDER` | `hashing` | `hashing` \| `sentence-transformers` |
+| `BUDGET_ENABLED` | `true` | Per-tenant USD/token metering |
+| `BUDGET_SOFT_RATIO` | `0.8` | Soft warning at this fraction of a hard limit |
+| `BUDGET_HARD_STATUS` | `402` | HTTP status when budget exhausted (`402` or `429`) |
+| `BUDGET_MOCK_USD` | `0.002` | Billable USD/request for mock (zero list price) |
+| `BUDGET_USD_PER_DAY` | `10` | Default hard USD/day (override per tenant via `TENANT_BUDGETS`) |
+| `BUDGET_TOKENS_PER_DAY` | `1000000` | Default hard tokens/day |
+| `TENANT_BUDGETS` | (empty) | Per-tenant limit overrides |
 | `ROUTER_URL` | `http://router:8081` | Gateway → router (Compose) |
 | `GATEWAY_HOST_PORT` | `18080` | Host port for the gateway |
 | `ROUTER_HOST_PORT` | `18081` | Host port for the router |
@@ -180,7 +204,7 @@ npm run dev
 2. Bedrock / Vertex adapters + routing policies ✅  
 3. Semantic caching ✅  
 4. Streaming ✅  
-5. Tenant budgets  
+5. Tenant budgets ✅  
 6. Observability + load proof  
 7. Multi-cloud deploy docs  
 

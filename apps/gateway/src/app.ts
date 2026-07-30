@@ -22,7 +22,7 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
       return;
     }
     const key = request.headers["x-api-key"];
-    if (typeof key !== "string" || key !== config.demoApiKey) {
+    if (typeof key !== "string" || !(key in config.tenantApiKeys)) {
       return reply.code(401).send({
         error: {
           message: "Missing or invalid X-API-Key",
@@ -49,13 +49,14 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
       });
     }
 
+    const key = request.headers["x-api-key"];
+    const tenantId =
+      typeof key === "string" ? (config.tenantApiKeys[key] ?? "default") : "default";
+
     const forwardHeaders: Record<string, string> = {
       "content-type": "application/json",
+      "x-tenant-id": tenantId,
     };
-    const tenantId = request.headers["x-tenant-id"];
-    if (typeof tenantId === "string" && tenantId.length > 0) {
-      forwardHeaders["x-tenant-id"] = tenantId;
-    }
     const cacheBypass = request.headers["x-cache-bypass"];
     if (typeof cacheBypass === "string" && cacheBypass.length > 0) {
       forwardHeaders["x-cache-bypass"] = cacheBypass;
@@ -91,6 +92,12 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
           type: "upstream_error",
         },
       });
+    }
+
+    // Surface soft budget warnings from the router.
+    const budgetWarning = upstream.headers.get("x-budget-warning");
+    if (budgetWarning) {
+      reply.header("x-budget-warning", budgetWarning);
     }
 
     const contentType = upstream.headers.get("content-type") ?? "application/json";
