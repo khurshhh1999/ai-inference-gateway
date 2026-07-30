@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 class VertexGenerativeModel(Protocol):
     def generate_content(self, contents: Any, **kwargs: Any) -> Any: ...
 
+    # Streaming uses the same method with stream=True (returns an iterator).
+
 
 class VertexModelFactory(Protocol):
     def __call__(self, model_name: str) -> VertexGenerativeModel: ...
@@ -107,8 +109,44 @@ class VertexProvider(Provider):
         return self._parse_response(result, request.model, physical)
 
     async def stream(self, request: ChatCompletionRequest) -> AsyncIterator[str]:
-        raise NotImplementedError("Vertex streaming lands in Step 4")
-        yield ""  # pragma: no cover
+        import asyncio
+
+        from app.streaming import iterate_sync_iterator
+
+        physical = settings.resolve_physical_model(request.model, self.name)
+        prompt = self._format_prompt(request)
+
+        def _generate() -> Any:
+            factory = self._ensure_sdk()
+            model = factory(physical)
+            kwargs: dict[str, Any] = {"stream": True}
+            generation: dict[str, Any] = {}
+            if request.max_tokens is not None:
+                generation["max_output_tokens"] = request.max_tokens
+            if request.temperature is not None:
+                generation["temperature"] = request.temperature
+            if generation:
+                kwargs["generation_config"] = generation
+            return model.generate_content(prompt, **kwargs)
+
+        try:
+            result = await asyncio.to_thread(_generate)
+        except ProviderError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ProviderError(str(exc), provider=self.name, retryable=True) from exc
+
+        async for chunk in iterate_sync_iterator(result):
+            text = ""
+            if hasattr(chunk, "text"):
+                try:
+                    text = chunk.text or ""
+                except Exception:  # noqa: BLE001
+                    text = ""
+            elif isinstance(chunk, str):
+                text = chunk
+            if text:
+                yield text
 
     def estimate_cost(self, request: ChatCompletionRequest) -> CostEstimate:
         prompt_tokens = max(1, sum(len(m.content.split()) for m in request.messages))

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AI Inference Gateway
-  version: 0.3.0
+  version: 0.4.0
   description: OpenAI-shaped chat completions edge for multi-cloud LLM routing.
 servers:
   - url: http://localhost:18080
@@ -28,7 +28,17 @@ paths:
               $ref: "./schemas/chat-completion.request.json"
       responses:
         "200":
-          description: Completion (cached=true on semantic cache hit)
+          description: |
+            JSON completion when `stream` is false/omitted.
+            When `stream` is true, OpenAI-shaped SSE (`text/event-stream`) with
+            `chat.completion.chunk` events ending in `data: [DONE]`.
+          content:
+            application/json:
+              schema:
+                type: object
+            text/event-stream:
+              schema:
+                type: string
         "401":
           description: Missing or invalid API key
         "502":

@@ -27,7 +27,7 @@ class Provider(ABC):
         raise NotImplementedError
 
     async def stream(self, request: ChatCompletionRequest) -> AsyncIterator[str]:
-        """Yield text deltas. Full SSE wiring lands in Step 4."""
+        """Yield incremental text deltas (router wraps these as SSE)."""
         raise NotImplementedError(f"Streaming is not implemented for provider '{self.name}'")
         yield ""  # pragma: no cover
 

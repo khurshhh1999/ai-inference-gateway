@@ -80,11 +80,19 @@ class MockProvider(Provider):
         )
 
     async def stream(self, request: ChatCompletionRequest) -> AsyncIterator[str]:
+        import asyncio
+
+        # Failures / latency match complete() so routing failover behaves the same.
         result = await self.complete(request)
         text = result.choices[0].message.content
-        # Naive token-ish chunks for Step 4 scaffolding / tests.
-        for word in text.split(" "):
-            yield word + " "
+        words = text.split(" ")
+        for i, word in enumerate(words):
+            # Tiny pause so clients observe incremental tokens (and abort mid-stream).
+            if self._latency_ms == 0:
+                await asyncio.sleep(0)
+            else:
+                await asyncio.sleep(min(0.02, self._latency_ms / 1000.0 / max(1, len(words))))
+            yield word if i == len(words) - 1 else word + " "
 
     def estimate_cost(self, request: ChatCompletionRequest) -> CostEstimate:
         prompt_tokens = max(1, sum(len(m.content.split()) for m in request.messages))

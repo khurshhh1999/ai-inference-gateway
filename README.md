@@ -38,7 +38,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see load results as th
 | Mock provider for local / CI (no cloud keys) | Done |
 | Multi-provider routing (Bedrock + Vertex) + failover | Done (Step 2) |
 | Semantic response cache (Redis) | Done (Step 3) |
-| SSE token streaming | Planned |
+| SSE token streaming | Done (Step 4) |
 | Per-tenant API keys + USD/token budgets | Planned |
 | Prometheus metrics + k6 load evidence | Planned |
 
@@ -70,6 +70,29 @@ curl -s http://localhost:18080/v1/chat/completions \
     "model": "mock-small",
     "messages": [{"role": "user", "content": "Explain semantic caching in one sentence."}]
   }' | jq .
+```
+
+### Streaming (`stream: true`)
+
+OpenAI-shaped SSE: incremental `chat.completion.chunk` frames, then `data: [DONE]`.
+Use `curl -N` so the client does not buffer the stream. The gateway pipes events
+without assembling the full body; disconnecting the client aborts the upstream
+router/provider stream. Completed streams are eligible for the semantic cache
+(same as non-stream); mid-stream aborts are not stored.
+
+```bash
+curl -N -s http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: demo-key-change-me" \
+  -d '{
+    "model": "mock-small",
+    "stream": true,
+    "messages": [{"role": "user", "content": "Stream a short hello."}]
+  }'
+
+# or
+chmod +x scripts/demo_streaming.sh
+./scripts/demo_streaming.sh
 ```
 
 ### Health
@@ -156,7 +179,7 @@ npm run dev
 1. Foundation + mock providers ✅  
 2. Bedrock / Vertex adapters + routing policies ✅  
 3. Semantic caching ✅  
-4. Streaming  
+4. Streaming ✅  
 5. Tenant budgets  
 6. Observability + load proof  
 7. Multi-cloud deploy docs  

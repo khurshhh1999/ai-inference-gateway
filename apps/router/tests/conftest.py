@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import pytest
 from fakeredis import FakeAsyncRedis
+from fastapi.testclient import TestClient
 
 from app.cache.embeddings import HashingEmbedder
 from app.cache.metrics import cache_metrics
 from app.cache.semantic import SemanticCache, reset_semantic_cache
+from app.main import app
 from app.providers import reset_routing_engine
 
 
@@ -34,3 +36,8 @@ async def _reset_singletons(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_routing_engine()
     await reset_semantic_cache()
     cache_metrics.reset()
+
+
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(app)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.models import ChatCompletionRequest, ChatMessage
 from app.providers import reset_routing_engine
 from app.providers.mock import MockProvider
@@ -14,11 +13,6 @@ def _reset_engine() -> None:
     reset_routing_engine()
     yield
     reset_routing_engine()
-
-
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
 
 
 def test_health(client: TestClient) -> None:
@@ -55,18 +49,6 @@ def test_chat_completions_validation(client: TestClient) -> None:
         json={"model": "mock-small", "messages": []},
     )
     assert res.status_code == 422
-
-
-def test_stream_not_implemented(client: TestClient) -> None:
-    res = client.post(
-        "/v1/chat/completions",
-        json={
-            "model": "mock-small",
-            "messages": [{"role": "user", "content": "hi"}],
-            "stream": True,
-        },
-    )
-    assert res.status_code == 501
 
 
 @pytest.mark.asyncio
