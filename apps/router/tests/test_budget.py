@@ -137,7 +137,7 @@ def test_http_rejects_over_budget(client: TestClient, monkeypatch: pytest.Monkey
         cache_enabled=True,
     )
     meter = get_budget_meter()
-    meter._settings = tight  # noqa: SLF001
+    meter._settings = tight
 
     # First request meters 0.002; second should still fit (0.004 > 0.003) after first+check
     r1 = client.post(

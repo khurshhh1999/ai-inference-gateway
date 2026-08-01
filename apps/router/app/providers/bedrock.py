@@ -78,7 +78,7 @@ class BedrockProvider(Provider):
             raw = await asyncio.to_thread(_invoke)
         except ProviderError:
             raise
-        except Exception as exc:  # noqa: BLE001 — map SDK errors uniformly
+        except Exception as exc:
             raise ProviderError(str(exc), provider=self.name, retryable=True) from exc
 
         return self._parse_response(raw, request.model, physical)
@@ -104,7 +104,7 @@ class BedrockProvider(Provider):
             raw = await asyncio.to_thread(_invoke)
         except ProviderError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderError(str(exc), provider=self.name, retryable=True) from exc
 
         event_stream = raw.get("body")

@@ -153,7 +153,7 @@ def test_circuit_breaker_opens_and_half_opens() -> None:
     assert breaker.allow() is False
 
     # Force reset window to elapse.
-    breaker._opened_at_ms = (breaker._opened_at_ms or 0) - 100  # noqa: SLF001
+    breaker._opened_at_ms = (breaker._opened_at_ms or 0) - 100
     assert breaker.allow() is True
     assert breaker.state == CircuitState.HALF_OPEN
     breaker.record_success()
@@ -178,7 +178,7 @@ async def test_circuit_breaker_skips_open_provider() -> None:
 
     # Primary still failing / circuit open — should go straight to mock.
     primary.reset_failures()
-    primary._fail_remaining = 0  # noqa: SLF001 — healthy again, but breaker still open
+    primary._fail_remaining = 0
     second = await engine.complete(_request("two"))
     assert second.provider == "mock"
     assert any("circuit_open" in a["error"] for a in second.attempts)

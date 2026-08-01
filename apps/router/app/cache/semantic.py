@@ -11,7 +11,8 @@ import redis.asyncio as redis
 
 from app.cache.embeddings import EmbeddingProvider, combined_similarity, get_embedder
 from app.cache.metrics import CacheMetrics, cache_metrics
-from app.config import Settings, settings as default_settings
+from app.config import Settings
+from app.config import settings as default_settings
 from app.models import ChatCompletionResponse
 
 logger = logging.getLogger(__name__)

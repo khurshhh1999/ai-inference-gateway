@@ -6,12 +6,14 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from app.config import Settings, settings as default_settings
+from app.config import Settings
+from app.config import settings as default_settings
 from app.errors import (
     AllProvidersFailedError,
     ProviderError,
     ProviderTimeoutError,
 )
+from app.metrics import observe_provider, record_provider_error, record_route_decision
 from app.models import ChatCompletionRequest, ChatCompletionResponse
 from app.providers.base import Provider
 from app.providers.circuit_breaker import CircuitBreaker
@@ -96,12 +98,19 @@ class RoutingEngine:
                 )
                 continue
 
+            started = time.perf_counter()
             try:
                 response = await asyncio.wait_for(provider.complete(request), timeout=timeout_s)
             except TimeoutError as exc:
                 breaker.record_failure()
                 err = ProviderTimeoutError(provider.name, self._settings.provider_timeout_ms)
                 attempts.append({"provider": provider.name, "error": str(err)})
+                record_provider_error(provider.name, "timeout")
+                observe_provider(
+                    provider=provider.name,
+                    outcome="error",
+                    seconds=time.perf_counter() - started,
+                )
                 logger.warning(
                     "route fail provider=%s error=timeout timeout_ms=%s",
                     provider.name,
@@ -113,6 +122,12 @@ class RoutingEngine:
             except ProviderError as exc:
                 breaker.record_failure()
                 attempts.append({"provider": provider.name, "error": str(exc)})
+                record_provider_error(provider.name, type(exc).__name__)
+                observe_provider(
+                    provider=provider.name,
+                    outcome="error",
+                    seconds=time.perf_counter() - started,
+                )
                 logger.warning(
                     "route fail provider=%s error=%s retryable=%s",
                     provider.name,
@@ -123,15 +138,27 @@ class RoutingEngine:
                     # Non-retryable still fails over so multi-cloud stays available.
                     continue
                 continue
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 breaker.record_failure()
                 attempts.append({"provider": provider.name, "error": str(exc)})
+                record_provider_error(provider.name, type(exc).__name__)
+                observe_provider(
+                    provider=provider.name,
+                    outcome="error",
+                    seconds=time.perf_counter() - started,
+                )
                 logger.exception("route fail provider=%s unexpected error", provider.name)
                 continue
 
             breaker.record_success()
+            observe_provider(
+                provider=provider.name,
+                outcome="ok",
+                seconds=time.perf_counter() - started,
+            )
             response.provider = provider.name
             response.route_reason = reason
+            record_route_decision(provider.name, reason)
             logger.info(
                 "route decision provider=%s reason=%s model=%s attempts=%s",
                 provider.name,
@@ -175,12 +202,19 @@ class RoutingEngine:
                 continue
 
             agen = provider.stream(request)
+            started = time.perf_counter()
             try:
                 first = await asyncio.wait_for(agen.__anext__(), timeout=timeout_s)
             except StopAsyncIteration:
                 breaker.record_failure()
                 attempts.append(
                     {"provider": provider.name, "error": "empty_stream"},
+                )
+                record_provider_error(provider.name, "empty_stream")
+                observe_provider(
+                    provider=provider.name,
+                    outcome="error",
+                    seconds=time.perf_counter() - started,
                 )
                 logger.warning("route fail provider=%s error=empty_stream", provider.name)
                 continue
@@ -189,6 +223,12 @@ class RoutingEngine:
                 breaker.record_failure()
                 err = ProviderTimeoutError(provider.name, self._settings.provider_timeout_ms)
                 attempts.append({"provider": provider.name, "error": str(err)})
+                record_provider_error(provider.name, "timeout")
+                observe_provider(
+                    provider=provider.name,
+                    outcome="error",
+                    seconds=time.perf_counter() - started,
+                )
                 logger.warning(
                     "route fail provider=%s error=timeout timeout_ms=%s stream=1",
                     provider.name,
@@ -199,12 +239,24 @@ class RoutingEngine:
                 await _aclose_quiet(agen)
                 breaker.record_failure()
                 attempts.append({"provider": provider.name, "error": str(exc)})
+                record_provider_error(provider.name, "not_implemented")
+                observe_provider(
+                    provider=provider.name,
+                    outcome="error",
+                    seconds=time.perf_counter() - started,
+                )
                 logger.warning("route fail provider=%s error=%s stream=1", provider.name, exc)
                 continue
             except ProviderError as exc:
                 await _aclose_quiet(agen)
                 breaker.record_failure()
                 attempts.append({"provider": provider.name, "error": str(exc)})
+                record_provider_error(provider.name, type(exc).__name__)
+                observe_provider(
+                    provider=provider.name,
+                    outcome="error",
+                    seconds=time.perf_counter() - started,
+                )
                 logger.warning(
                     "route fail provider=%s error=%s retryable=%s stream=1",
                     provider.name,
@@ -212,16 +264,28 @@ class RoutingEngine:
                     exc.retryable,
                 )
                 continue
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 await _aclose_quiet(agen)
                 breaker.record_failure()
                 attempts.append({"provider": provider.name, "error": str(exc)})
+                record_provider_error(provider.name, type(exc).__name__)
+                observe_provider(
+                    provider=provider.name,
+                    outcome="error",
+                    seconds=time.perf_counter() - started,
+                )
                 logger.exception(
                     "route fail provider=%s unexpected error stream=1", provider.name
                 )
                 continue
 
             breaker.record_success()
+            observe_provider(
+                provider=provider.name,
+                outcome="ok",
+                seconds=time.perf_counter() - started,
+            )
+            record_route_decision(provider.name, reason)
             logger.info(
                 "route decision provider=%s reason=%s model=%s attempts=%s stream=1",
                 provider.name,

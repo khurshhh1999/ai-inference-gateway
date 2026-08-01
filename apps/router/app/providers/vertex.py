@@ -103,7 +103,7 @@ class VertexProvider(Provider):
             result = await asyncio.to_thread(_generate)
         except ProviderError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderError(str(exc), provider=self.name, retryable=True) from exc
 
         return self._parse_response(result, request.model, physical)
@@ -133,7 +133,7 @@ class VertexProvider(Provider):
             result = await asyncio.to_thread(_generate)
         except ProviderError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ProviderError(str(exc), provider=self.name, retryable=True) from exc
 
         async for chunk in iterate_sync_iterator(result):

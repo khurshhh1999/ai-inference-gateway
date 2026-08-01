@@ -4,7 +4,16 @@ import Fastify, {
   type FastifyReply,
   type FastifyRequest,
 } from "fastify";
+import { resolveTenant } from "./auth.js";
 import type { GatewayConfig } from "./config.js";
+import {
+  authFailures,
+  bodyRejected,
+  metricsPayload,
+  requestDuration,
+  upstreamErrors,
+} from "./metrics.js";
+import { openApiDocument, swaggerUiHtml } from "./openapi.js";
 
 type ChatBody = {
   model: string;
@@ -14,15 +23,61 @@ type ChatBody = {
   temperature?: number;
 };
 
+const PUBLIC_PATHS = new Set([
+  "/health",
+  "/metrics",
+  "/openapi.json",
+  "/docs",
+]);
+
+function routeLabel(url: string): string {
+  const path = url.split("?")[0] ?? url;
+  if (path === "/v1/chat/completions") return "/v1/chat/completions";
+  if (PUBLIC_PATHS.has(path)) return path;
+  return "other";
+}
+
 export async function buildServer(config: GatewayConfig): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: config.logLevel } });
+  const app = Fastify({
+    logger: { level: config.logLevel },
+    bodyLimit: config.maxBodyBytes,
+    requestTimeout: 120_000,
+  });
+
+  app.setErrorHandler((err, request, reply) => {
+    const statusCode =
+      typeof err === "object" && err && "statusCode" in err
+        ? Number((err as { statusCode?: number }).statusCode)
+        : 500;
+    if (statusCode === 413) {
+      bodyRejected.inc({ reason: "too_large" });
+      return reply.code(413).send({
+        error: {
+          message: `Request body exceeds limit of ${config.maxBodyBytes} bytes`,
+          type: "invalid_request_error",
+        },
+      });
+    }
+    request.log.error({ err }, "request error");
+    if (!reply.sent) {
+      return reply.code(statusCode >= 400 ? statusCode : 500).send({
+        error: {
+          message: err instanceof Error ? err.message : "Internal error",
+          type: "server_error",
+        },
+      });
+    }
+  });
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    if (request.url.startsWith("/health")) {
+    (request as FastifyRequest & { _startedAt?: number })._startedAt = performance.now();
+    const path = (request.url.split("?")[0] ?? request.url) as string;
+    if (PUBLIC_PATHS.has(path)) {
       return;
     }
     const key = request.headers["x-api-key"];
-    if (typeof key !== "string" || !(key in config.tenantApiKeys)) {
+    if (typeof key !== "string") {
+      authFailures.inc();
       return reply.code(401).send({
         error: {
           message: "Missing or invalid X-API-Key",
@@ -30,6 +85,31 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
         },
       });
     }
+    const tenant = resolveTenant(key, config.tenantApiKeys);
+    if (tenant === null) {
+      authFailures.inc();
+      return reply.code(401).send({
+        error: {
+          message: "Missing or invalid X-API-Key",
+          type: "authentication_error",
+        },
+      });
+    }
+    (request as FastifyRequest & { tenantId?: string }).tenantId = tenant;
+  });
+
+  app.addHook("onResponse", async (request, reply) => {
+    const started = (request as FastifyRequest & { _startedAt?: number })._startedAt;
+    if (started === undefined) return;
+    const seconds = (performance.now() - started) / 1000;
+    requestDuration.observe(
+      {
+        method: request.method,
+        route: routeLabel(request.url),
+        status: String(reply.statusCode),
+      },
+      seconds,
+    );
   });
 
   app.get("/health", async () => ({
@@ -38,9 +118,21 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
     routerUrl: config.routerUrl,
   }));
 
+  app.get("/metrics", async (_request, reply) => {
+    const { body, contentType } = await metricsPayload();
+    return reply.type(contentType).send(body);
+  });
+
+  app.get("/openapi.json", async () => openApiDocument);
+
+  app.get("/docs", async (_request, reply) =>
+    reply.type("text/html; charset=utf-8").send(swaggerUiHtml),
+  );
+
   app.post<{ Body: ChatBody }>("/v1/chat/completions", async (request, reply) => {
     const body = request.body;
     if (!body?.model || !Array.isArray(body.messages) || body.messages.length === 0) {
+      bodyRejected.inc({ reason: "invalid_schema" });
       return reply.code(400).send({
         error: {
           message: "Request must include model and a non-empty messages array",
@@ -49,9 +141,8 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
       });
     }
 
-    const key = request.headers["x-api-key"];
     const tenantId =
-      typeof key === "string" ? (config.tenantApiKeys[key] ?? "default") : "default";
+      (request as FastifyRequest & { tenantId?: string }).tenantId ?? "default";
 
     const forwardHeaders: Record<string, string> = {
       "content-type": "application/json",
@@ -64,13 +155,15 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
 
     const wantStream = Boolean(body.stream);
     const abort = new AbortController();
-    const onClientClose = () => {
-      // Cancel upstream fetch when the client disconnects mid-stream.
+    // Abort upstream only on client disconnect — not on request 'close', which
+    // fires after the body is fully read and would cancel every proxy call.
+    const onClientGone = () => {
       if (!reply.raw.writableEnded) {
         abort.abort();
       }
     };
-    request.raw.on("close", onClientClose);
+    request.raw.on("aborted", onClientGone);
+    reply.raw.on("close", onClientGone);
 
     let upstream: Response;
     try {
@@ -81,10 +174,12 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
         signal: abort.signal,
       });
     } catch (err) {
-      request.raw.off("close", onClientClose);
+      request.raw.off("aborted", onClientGone);
+      reply.raw.off("close", onClientGone);
       if (abort.signal.aborted) {
         return reply;
       }
+      upstreamErrors.inc({ kind: "unreachable" });
       request.log.error({ err }, "router unreachable");
       return reply.code(502).send({
         error: {
@@ -92,6 +187,10 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
           type: "upstream_error",
         },
       });
+    }
+
+    if (upstream.status >= 500) {
+      upstreamErrors.inc({ kind: "upstream_5xx" });
     }
 
     // Surface soft budget warnings from the router.
@@ -121,10 +220,12 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
         abort.abort();
       });
       nodeStream.on("close", () => {
-        request.raw.off("close", onClientClose);
+        request.raw.off("aborted", onClientGone);
+        reply.raw.off("close", onClientGone);
       });
       nodeStream.on("end", () => {
-        request.raw.off("close", onClientClose);
+        request.raw.off("aborted", onClientGone);
+        reply.raw.off("close", onClientGone);
       });
 
       return reply.send(nodeStream);
@@ -145,7 +246,8 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
         });
       }
     } finally {
-      request.raw.off("close", onClientClose);
+      request.raw.off("aborted", onClientGone);
+      reply.raw.off("close", onClientGone);
     }
   });
 

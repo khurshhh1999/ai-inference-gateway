@@ -1,0 +1,180 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Cache hit rate",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(router_cache_hit_total[5m])) / clamp_min(sum(rate(router_cache_hit_total[5m])) + sum(rate(router_cache_miss_total[5m])), 1e-9)",
+          "legendFormat": "hit rate",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "green", "value": 0.5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Estimated USD saved (rate)",
+      "id": 2,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(router_estimated_usd_saved_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "type": "stat",
+      "title": "Spend USD (rate)",
+      "id": 3,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(router_spend_usd_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "type": "stat",
+      "title": "Budget rejections (rate)",
+      "id": 4,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(router_budget_rejections_total[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request p95 latency (gateway vs router)",
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(gateway_request_duration_seconds_bucket{route=\"/v1/chat/completions\"}[5m])))",
+          "legendFormat": "gateway p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(router_request_duration_seconds_bucket{cached=\"false\"}[5m])))",
+          "legendFormat": "router miss p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(router_request_duration_seconds_bucket{cached=\"true\"}[5m])))",
+          "legendFormat": "router hit p95",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache hits vs misses",
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum(rate(router_cache_hit_total[5m]))",
+          "legendFormat": "hits/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(router_cache_miss_total[5m]))",
+          "legendFormat": "misses/s",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider errors",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "sum by (provider, error) (rate(router_provider_errors_total[5m]))",
+          "legendFormat": "{{provider}} {{error}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Route decisions",
+      "id": 8,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "sum by (provider, reason) (rate(router_route_decisions_total[5m]))",
+          "legendFormat": "{{provider}} / {{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Gateway auth failures",
+      "id": 9,
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "sum(rate(gateway_auth_failures_total[5m]))",
+          "legendFormat": "auth failures/s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Upstream errors",
+      "id": 10,
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(gateway_upstream_errors_total[5m]))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["inference-gateway", "prometheus"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "AI Inference Gateway Overview",
+  "uid": "inference-gateway-overview",
+  "version": 1
+}

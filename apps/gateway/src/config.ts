@@ -4,6 +4,8 @@ export type GatewayConfig = {
   /** API key → tenant id. Keys authenticate; tenant is always forwarded as X-Tenant-Id. */
   tenantApiKeys: Record<string, string>;
   logLevel: string;
+  /** Max JSON body size in bytes (auth + DoS hardening). */
+  maxBodyBytes: number;
 };
 
 /** Parse `key:tenant,other:acme` (or JSON object) into a key→tenant map. */
@@ -45,5 +47,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     routerUrl: (env.ROUTER_URL ?? "http://127.0.0.1:8081").replace(/\/$/, ""),
     tenantApiKeys,
     logLevel: env.LOG_LEVEL ?? "info",
+    maxBodyBytes: Number(env.MAX_BODY_BYTES ?? String(256 * 1024)),
   };
 }

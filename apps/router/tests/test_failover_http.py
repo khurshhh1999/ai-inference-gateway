@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+import app.api.chat as chat_api
+import app.main as main_api
 from app.config import Settings
 from app.main import app
 from app.providers import reset_routing_engine
 from app.providers.mock import MockProvider
 from app.routing.engine import RoutingEngine
-import app.api.chat as chat_api
-import app.main as main_api
 
 
 def test_chat_endpoint_failsover_and_returns_route_reason(monkeypatch) -> None:

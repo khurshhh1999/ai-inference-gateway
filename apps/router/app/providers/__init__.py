@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 
-from app.config import Settings, settings as default_settings
+from app.config import Settings
+from app.config import settings as default_settings
 from app.providers.base import Provider
 from app.providers.bedrock import BedrockProvider
 from app.providers.mock import MockProvider

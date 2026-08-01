@@ -2,21 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.metrics import record_cache_hit, record_cache_miss
+
 
 @dataclass
 class CacheMetrics:
-    """Process-local cache counters (Prometheus naming lands in Step 6)."""
+    """Process-local counters for /v1/cache/stats (+ Prometheus side effects)."""
 
     cache_hit_total: int = 0
     cache_miss_total: int = 0
     estimated_usd_saved: float = 0.0
 
     def record_hit(self, saved_usd: float) -> None:
+        saved = max(0.0, saved_usd)
         self.cache_hit_total += 1
-        self.estimated_usd_saved += max(0.0, saved_usd)
+        self.estimated_usd_saved += saved
+        record_cache_hit(saved)
 
     def record_miss(self) -> None:
         self.cache_miss_total += 1
+        record_cache_miss()
 
     @property
     def hit_rate(self) -> float:

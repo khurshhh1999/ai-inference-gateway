@@ -10,7 +10,8 @@ from typing import Any
 import redis.asyncio as redis
 
 from app.budget.audit import log_budget_rejection, log_spend_event
-from app.config import Settings, settings as default_settings
+from app.config import Settings
+from app.config import settings as default_settings
 
 logger = logging.getLogger(__name__)
 

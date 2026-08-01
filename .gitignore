@@ -49,6 +49,9 @@ service-account*.json
 *.tsbuildinfo
 coverage/
 
+# Load-test ephemeral output (RESULTS.md is committed)
+load/summary.json
+
 # Planning / agent docs (local only — do not commit)
 plan.md
 AGENTS.md

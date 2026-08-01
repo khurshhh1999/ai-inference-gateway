@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -223,18 +223,17 @@ async def test_vertex_stream_with_mocked_sdk() -> None:
 @pytest.mark.asyncio
 async def test_http_disconnect_stops_generator() -> None:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        async with ac.stream(
-            "POST",
-            "/v1/chat/completions",
-            json={
-                "model": "mock-small",
-                "messages": [{"role": "user", "content": "disconnect please"}],
-                "stream": True,
-            },
-            headers={"X-Cache-Bypass": "1"},
-        ) as res:
-            assert res.status_code == 200
-            # Read only the first chunk, then close — mirrors client abort.
-            async for _line in res.aiter_lines():
-                break
+    async with AsyncClient(transport=transport, base_url="http://test") as ac, ac.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={
+            "model": "mock-small",
+            "messages": [{"role": "user", "content": "disconnect please"}],
+            "stream": True,
+        },
+        headers={"X-Cache-Bypass": "1"},
+    ) as res:
+        assert res.status_code == 200
+        # Read only the first chunk, then close — mirrors client abort.
+        async for _line in res.aiter_lines():
+            break

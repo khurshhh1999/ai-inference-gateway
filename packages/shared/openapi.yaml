@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AI Inference Gateway
-  version: 0.5.0
+  version: 0.6.0
   description: OpenAI-shaped chat completions edge for multi-cloud LLM routing.
 servers:
   - url: http://localhost:18080
@@ -12,6 +12,24 @@ paths:
       responses:
         "200":
           description: OK
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus text exposition format
+  /openapi.json:
+    get:
+      summary: OpenAPI document
+      responses:
+        "200":
+          description: OpenAPI 3.1 JSON
+  /docs:
+    get:
+      summary: Swagger UI
+      responses:
+        "200":
+          description: HTML docs
   /v1/chat/completions:
     post:
       summary: Create a chat completion
@@ -39,10 +57,14 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "400":
+          description: Invalid request body
         "401":
           description: Missing or invalid API key
         "402":
           description: Tenant hard USD/token budget exhausted (configurable as 429)
+        "413":
+          description: Request body exceeds MAX_BODY_BYTES
         "429":
           description: Tenant hard budget exhausted when BUDGET_HARD_STATUS=429
         "502":

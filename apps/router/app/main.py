@@ -2,20 +2,21 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 
 from app.api.chat import router as chat_router
 from app.budget.meter import get_budget_meter
 from app.cache.semantic import get_semantic_cache
 from app.config import settings
+from app.metrics import render_latest
 from app.providers import get_routing_engine
 
 logging.basicConfig(level=settings.log_level.upper())
 
 app = FastAPI(
     title="AI Inference Router",
-    version="0.5.0",
+    version="0.6.0",
     description="Routing engine for the AI Inference Gateway",
 )
 
@@ -61,3 +62,9 @@ async def health() -> JSONResponse:
             },
         }
     )
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    body, content_type = render_latest()
+    return Response(content=body, media_type=content_type)

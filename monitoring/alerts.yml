@@ -1,0 +1,49 @@
+groups:
+  - name: inference-gateway
+    rules:
+      - alert: HighGatewayErrorRate
+        expr: |
+          (
+            sum(rate(gateway_request_duration_seconds_count{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(gateway_request_duration_seconds_count[5m])), 1e-9)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Gateway 5xx rate above 5%
+          description: More than 5% of gateway requests are failing over 5 minutes.
+
+      - alert: HighRouterP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(router_request_duration_seconds_bucket{cached="false"}[5m]))
+          ) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Router p95 latency (cache miss) above 1s
+          description: Cache-miss p95 has exceeded 1s for 10 minutes.
+
+      - alert: BudgetBurnHigh
+        expr: |
+          sum(rate(router_budget_rejections_total[10m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated hard budget rejections
+          description: Tenants are hitting hard budgets at >0.1 rejects/sec.
+
+      - alert: ProviderErrorSpike
+        expr: |
+          sum(rate(router_provider_errors_total[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Provider error rate spike
+          description: Router is seeing elevated provider failures.

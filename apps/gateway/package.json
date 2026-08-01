@@ -1,6 +1,6 @@
 {
   "name": "ai-inference-gateway",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "fastify": "^5.2.1"
+    "fastify": "^5.2.1",
+    "prom-client": "^15.1.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

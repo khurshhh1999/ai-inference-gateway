@@ -31,6 +31,18 @@ describe("gateway", () => {
     assert.equal(res.json().service, "gateway");
   });
 
+  it("exposes prometheus metrics without API key", async () => {
+    const res = await app.inject({ method: "GET", url: "/metrics" });
+    assert.equal(res.statusCode, 200);
+    assert.match(res.body, /gateway_request_duration_seconds/);
+  });
+
+  it("serves OpenAPI document", async () => {
+    const res = await app.inject({ method: "GET", url: "/openapi.json" });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().info.title, "AI Inference Gateway");
+  });
+
   it("rejects missing API key", async () => {
     const res = await app.inject({
       method: "POST",
@@ -38,6 +50,33 @@ describe("gateway", () => {
       payload: { model: "mock-small", messages: [{ role: "user", content: "hi" }] },
     });
     assert.equal(res.statusCode, 401);
+  });
+
+  it("rejects oversized request bodies", async () => {
+    const limited = await buildServer(
+      loadConfig({
+        PORT: "0",
+        ROUTER_URL: "http://router.test",
+        DEMO_API_KEY: "demo-key-change-me",
+        LOG_LEVEL: "silent",
+        MAX_BODY_BYTES: "200",
+      }),
+    );
+    await limited.ready();
+    try {
+      const res = await limited.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        headers: { "x-api-key": "demo-key-change-me" },
+        payload: {
+          model: "mock-small",
+          messages: [{ role: "user", content: "x".repeat(500) }],
+        },
+      });
+      assert.equal(res.statusCode, 413);
+    } finally {
+      await limited.close();
+    }
   });
 
   it("proxies completions to the router", async () => {

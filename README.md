@@ -4,7 +4,7 @@ A multi-cloud **LLM inference gateway** that fronts **AWS Bedrock** and **GCP Ve
 behind one API — with **semantic caching**, **streaming**, and **per-tenant budgeting**.
 
 Built to cut model spend and latency for multi-tenant AI products: target **~40% lower
-model cost** and **~35% lower p95** on cacheable traffic (see load results as they land).
+model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](load/RESULTS.md)).
 
 ## Architecture
 
@@ -29,6 +29,8 @@ model cost** and **~35% lower p95** on cacheable traffic (see load results as th
 | **gateway** | 8080 (host **18080**) | Public REST + SSE edge (TypeScript / Fastify) |
 | **router** | 8081 (host **18081**) | Routing, providers, semantic cache, budgets (FastAPI) |
 | **Redis** | 6379 (internal) | Cache vectors / keys + per-tenant usage counters |
+| **Prometheus** | 9090 (host **19090**) | Metrics scrape (compose profile `monitoring`) |
+| **Grafana** | 3000 (host **13000**) | Dashboards (compose profile `monitoring`) |
 
 ## Key features
 
@@ -40,7 +42,8 @@ model cost** and **~35% lower p95** on cacheable traffic (see load results as th
 | Semantic response cache (Redis) | Done (Step 3) |
 | SSE token streaming | Done (Step 4) |
 | Per-tenant API keys + USD/token budgets | Done (Step 5) |
-| Prometheus metrics + k6 load evidence | Planned |
+| Prometheus metrics + Grafana + k6 p95 evidence | Done (Step 6) |
+| Multi-cloud deploy docs | Planned (Step 7) |
 
 ## Quick start
 
@@ -48,6 +51,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see load results as th
 
 - Docker & Docker Compose
 - (Optional for local dev) Node 20+, Python 3.12+
+- (Optional) [k6](https://k6.io) for load tests
 
 ### Run the stack
 
@@ -59,6 +63,14 @@ docker compose up --build
 Gateway is published on **http://localhost:18080** by default (router on **18081**)
 so it does not collide with other local stacks on 8080/8081. Override with
 `GATEWAY_HOST_PORT` / `ROUTER_HOST_PORT` in `.env`.
+
+With observability:
+
+```bash
+docker compose --profile monitoring up --build
+# Prometheus http://localhost:19090
+# Grafana    http://localhost:13000  (admin / admin by default)
+```
 
 ### Chat completion (mock)
 
@@ -95,15 +107,24 @@ chmod +x scripts/demo_streaming.sh
 ./scripts/demo_streaming.sh
 ```
 
-### Health
+### Health, metrics, OpenAPI
 
 ```bash
 curl -s http://localhost:18080/health
 curl -s http://localhost:18081/health
+curl -s http://localhost:18080/metrics | head
+curl -s http://localhost:18081/metrics | head
+curl -s http://localhost:18080/openapi.json | jq .info
+# Swagger UI: http://localhost:18080/docs
 curl -s http://localhost:18081/v1/cache/stats
 curl -s http://localhost:18081/v1/tenants/default/usage
 curl -s http://localhost:18081/v1/tenants/default/budget
 ```
+
+Stable Prometheus names use `gateway_*` / `router_*` prefixes with explicit
+histogram buckets for p95. Grafana dashboard **AI Inference Gateway Overview**
+is provisioned under the `monitoring` profile; alerts cover error rate, miss
+p95, budget burn, and provider errors (`monitoring/alerts.yml`).
 
 ### Per-tenant budgets
 
@@ -134,14 +155,26 @@ chmod +x scripts/demo_semantic_cache.sh
 The script prints per-request `cached` / `route_reason` and router stats
 (`cache_hit_total`, `cache_miss_total`, `estimated_usd_saved`).
 
+### Load test (p95 evidence)
+
+```bash
+# stack must be up on :18080
+chmod +x load/run.sh
+./load/run.sh
+```
+
+This runs k6 `SCENARIO=compare`: baseline (cache bypass + unique prompts) then
+cached (warmed repeated prompt), and refreshes [load/RESULTS.md](load/RESULTS.md).
+Acceptance target: **≥35% p95 improvement** on the cacheable mix.
+
 ## Project layout
 
 ```
 apps/gateway/     # TypeScript edge API
 apps/router/      # FastAPI routing engine
 packages/shared/  # Shared OpenAPI / schemas
-monitoring/       # Prometheus / Grafana (later)
-load/             # k6 scripts (later)
+monitoring/       # Prometheus + Grafana + alerts
+load/             # k6 scripts + RESULTS.md
 deploy/           # AWS / GCP / Helm sketches (later)
 ```
 
@@ -159,6 +192,7 @@ Copy `.env.example` → `.env`. Important variables:
 | `MODEL_MAP` | (see `.env.example`) | Logical model → provider-specific ids |
 | `DEMO_API_KEY` | `demo-key-change-me` | Gateway API key (maps to tenant `default` if `TENANT_API_KEYS` unset) |
 | `TENANT_API_KEYS` | (empty) | `key:tenant,...` map for multi-tenant auth |
+| `MAX_BODY_BYTES` | `262144` | Gateway JSON body limit (413 when exceeded) |
 | `REDIS_URL` | `redis://redis:6379/0` | Cache / budget store |
 | `CACHE_ENABLED` | `true` | Semantic response cache |
 | `CACHE_SIMILARITY_THRESHOLD` | `0.90` | Min similarity (embedding cosine or string ratio) |
@@ -175,6 +209,8 @@ Copy `.env.example` → `.env`. Important variables:
 | `ROUTER_URL` | `http://router:8081` | Gateway → router (Compose) |
 | `GATEWAY_HOST_PORT` | `18080` | Host port for the gateway |
 | `ROUTER_HOST_PORT` | `18081` | Host port for the router |
+| `PROMETHEUS_HOST_PORT` | `19090` | Host port for Prometheus (`--profile monitoring`) |
+| `GRAFANA_HOST_PORT` | `13000` | Host port for Grafana (`--profile monitoring`) |
 
 Cloud credentials (Bedrock / Vertex) are optional and only required when
 `PROVIDER_MODE` is `bedrock`, `vertex`, or `multi` and you want real cloud calls.
@@ -188,6 +224,7 @@ failsover to `mock` (local/CI stays green).
 cd apps/router
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+ruff check app tests
 pytest
 uvicorn app.main:app --reload --port 8081
 
@@ -197,6 +234,9 @@ npm install
 npm test
 npm run dev
 ```
+
+CI (GitHub Actions) runs router lint + unit tests, gateway unit + build, and a
+Docker Compose smoke (health, chat completion, `/metrics`, OpenAPI).
 
 ## License
 
