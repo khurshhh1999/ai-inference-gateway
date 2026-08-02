@@ -138,7 +138,7 @@ class Settings(BaseSettings):
         "gemini-flash=vertex:gemini-1.5-flash"
     )
 
-    # Semantic cache (Step 3)
+    # Semantic cache
     cache_enabled: bool = True
     cache_similarity_threshold: float = 0.90
     cache_ttl_seconds: int = 3600
@@ -152,7 +152,7 @@ class Settings(BaseSettings):
     model_cost_per_1k_input: str = ""
     model_cost_per_1k_output: str = ""
 
-    # Per-tenant budgeting (Step 5)
+    # Per-tenant budgeting
     budget_enabled: bool = True
     budget_soft_ratio: float = 0.8
     budget_hard_status: int = 402  # 402 Payment Required | 429 Too Many Requests

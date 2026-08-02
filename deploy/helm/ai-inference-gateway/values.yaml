@@ -1,0 +1,58 @@
+# Default: mock providers — safe for kind / local demos (no cloud keys).
+
+replicaCount:
+  gateway: 1
+  router: 1
+
+image:
+  gateway:
+    repository: ai-gateway
+    tag: local
+    pullPolicy: IfNotPresent
+  router:
+    repository: ai-router
+    tag: local
+    pullPolicy: IfNotPresent
+
+service:
+  gateway:
+    type: NodePort
+    port: 8080
+    nodePort: 30080
+  router:
+    type: ClusterIP
+    port: 8081
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  port: 6379
+
+auth:
+  # Override via --set or a sealed secret in real clusters
+  demoApiKey: demo-key-change-me
+
+router:
+  providerMode: mock
+  routingPolicy: failover
+  routingPrimary: bedrock
+  routingFallback: "vertex,mock"
+  cacheEnabled: "true"
+  budgetEnabled: "true"
+  redisUrl: redis://redis:6379/0
+  modelMap: >-
+    gpt-proxy=bedrock:anthropic.claude-3-haiku-20240307-v1:0,vertex:gemini-1.5-flash;mock-small=mock:mock-small
+  # Optional cloud — leave empty for mock demos
+  awsRegion: ""
+  googleCloudProject: ""
+  googleCloudLocation: us-central1
+
+resources:
+  gateway:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  router:
+    requests:
+      cpu: 100m
+      memory: 128Mi

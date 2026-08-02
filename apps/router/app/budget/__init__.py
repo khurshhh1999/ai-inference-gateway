@@ -1,4 +1,4 @@
-"""Per-tenant budgeting and cost metering (Step 5)."""
+"""Per-tenant budgeting and cost metering."""
 
 from app.budget.meter import (
     BudgetExceededError,

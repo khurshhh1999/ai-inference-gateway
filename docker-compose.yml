@@ -46,6 +46,15 @@ services:
       BUDGET_TOKENS_PER_DAY: ${BUDGET_TOKENS_PER_DAY:-1000000}
       BUDGET_TOKENS_PER_MONTH: ${BUDGET_TOKENS_PER_MONTH:-10000000}
       TENANT_BUDGETS: ${TENANT_BUDGETS:-}
+      # Optional cloud credentials (only when PROVIDER_MODE is bedrock/vertex/multi)
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-us-central1}
+      # To use a mounted SA JSON locally, add a volume and set:
+      # GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp.json
     depends_on:
       redis:
         condition: service_healthy

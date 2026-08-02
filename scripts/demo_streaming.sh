@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Demo: SSE token streaming through gateway → router → mock (Step 4).
+# Demo: SSE token streaming through gateway → router → mock.
 # Requires the stack: docker compose up --build
 set -euo pipefail
 

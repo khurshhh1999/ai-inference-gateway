@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Demo: semantic cache hit rate + estimated USD saved (Step 3).
+# Demo: semantic cache hit rate + estimated USD saved.
 # Requires the stack: docker compose up --build
 set -euo pipefail
 

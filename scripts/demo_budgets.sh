@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Demo: per-tenant budgets + cost metering (Step 5).
+# Demo: per-tenant budgets + cost metering.
 # Requires the stack: docker compose up --build
 set -euo pipefail
 

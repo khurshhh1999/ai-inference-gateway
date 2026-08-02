@@ -1,0 +1,78 @@
+# Sketch only — replace PROJECT, REGION, IMAGE, REDIS_HOST, secret names.
+# Apply via gcloud run services replace after editing, or treat as documentation.
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ai-gateway
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: "20"
+    spec:
+      serviceAccountName: ai-gateway-sa@PROJECT.iam.gserviceaccount.com
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT/ai-inference/ai-gateway:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: ROUTER_URL
+              value: https://ai-router-HASH-uc.a.run.app
+            - name: LOG_LEVEL
+              value: info
+            - name: MAX_BODY_BYTES
+              value: "262144"
+            - name: DEMO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: demo-api-key
+                  key: latest
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ai-router
+  annotations:
+    run.googleapis.com/ingress: internal
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/vpc-access-connector: projects/PROJECT/locations/REGION/connectors/ai-inference-connector
+        run.googleapis.com/vpc-access-egress: private-ranges-only
+        autoscaling.knative.dev/maxScale: "20"
+    spec:
+      serviceAccountName: ai-router-sa@PROJECT.iam.gserviceaccount.com
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT/ai-inference/ai-router:latest
+          ports:
+            - containerPort: 8081
+          env:
+            - name: PORT
+              value: "8081"
+            - name: PROVIDER_MODE
+              value: vertex
+            - name: GOOGLE_CLOUD_PROJECT
+              value: PROJECT
+            - name: GOOGLE_CLOUD_LOCATION
+              value: REGION
+            - name: REDIS_URL
+              value: redis://REDIS_HOST:6379/0
+            - name: ROUTING_POLICY
+              value: failover
+            - name: ROUTING_PRIMARY
+              value: vertex
+            - name: ROUTING_FALLBACK
+              value: mock
+            - name: CACHE_ENABLED
+              value: "true"
+            - name: BUDGET_ENABLED
+              value: "true"
+            - name: MODEL_MAP
+              value: >-
+                gpt-proxy=vertex:gemini-1.5-flash;mock-small=mock:mock-small

@@ -3,7 +3,7 @@
 FastAPI service that selects a provider, talks to Bedrock / Vertex / mock adapters,
 owns semantic caching, and enforces per-tenant USD/token budgets.
 
-## Step 2 — routing
+## Routing
 
 - **Policies:** `ROUTING_POLICY` = `prefer_cost` | `prefer_latency` | `prefer_provider` | `failover`
 - **Failover:** primary (`ROUTING_PRIMARY`) then `ROUTING_FALLBACK` chain, with per-call
@@ -15,7 +15,7 @@ owns semantic caching, and enforces per-tenant USD/token budgets.
 Responses include `provider` and `route_reason` (`cost` / `latency` / `affinity` / `failover`).
 Route decisions are also logged.
 
-## Step 5 — budgets
+## Budgets
 
 - Redis counters: USD + tokens per minute/day/month (`budget:{tenant}:…`)
 - Soft warning (`X-Budget-Warning: soft`) at `BUDGET_SOFT_RATIO`; hard reject with
@@ -23,6 +23,11 @@ Route decisions are also logged.
 - Admin: `GET /v1/tenants/{id}/usage`, `GET /v1/tenants/{id}/budget`
 - Spend events logged as structured `spend_audit` lines
 
+## Cloud SDKs
+
 Optional extras: `pip install -e ".[bedrock]"`, `".[vertex]"`, or `".[cloud]"`.
+
+Docker image build arg `INSTALL_EXTRAS` (e.g. `[cloud]`) installs the same extras
+for AWS/GCP deploys — see [`deploy/`](../../deploy/).
 
 See the repo root `README.md` for architecture and curl examples.

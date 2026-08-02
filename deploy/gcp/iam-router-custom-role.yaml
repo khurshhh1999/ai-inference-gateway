@@ -1,0 +1,10 @@
+# Optional custom role narrower than roles/aiplatform.user.
+# Create with: gcloud iam roles create aiInferenceRouter --project=PROJECT --file=iam-router-custom-role.yaml
+title: "AI Inference Router Vertex"
+description: "Invoke Vertex generative models only"
+stage: GA
+includedPermissions:
+  - aiplatform.endpoints.predict
+  - aiplatform.endpoints.get
+  # GenerativeModel / publisher models also need:
+  - aiplatform.publisherModels.predict

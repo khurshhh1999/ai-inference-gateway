@@ -1,0 +1,97 @@
+{
+  "_comment": "Sketch only — replace ACCOUNT, REGION, secret ARNs, and Redis host before use.",
+  "gateway": {
+    "family": "ai-inference-gateway",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "256",
+    "memory": "512",
+    "executionRoleArn": "arn:aws:iam::ACCOUNT:role/ecsTaskExecutionRole",
+    "containerDefinitions": [
+      {
+        "name": "gateway",
+        "image": "ACCOUNT.dkr.ecr.REGION.amazonaws.com/ai-gateway:latest",
+        "portMappings": [{ "containerPort": 8080, "protocol": "tcp" }],
+        "environment": [
+          { "name": "PORT", "value": "8080" },
+          { "name": "ROUTER_URL", "value": "http://router.internal:8081" },
+          { "name": "LOG_LEVEL", "value": "info" },
+          { "name": "MAX_BODY_BYTES", "value": "262144" }
+        ],
+        "secrets": [
+          {
+            "name": "DEMO_API_KEY",
+            "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:ai-gateway/demo-api-key"
+          }
+        ],
+        "healthCheck": {
+          "command": [
+            "CMD-SHELL",
+            "node -e \"fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+          ],
+          "interval": 10,
+          "timeout": 5,
+          "retries": 3,
+          "startPeriod": 15
+        },
+        "logConfiguration": {
+          "logDriver": "awslogs",
+          "options": {
+            "awslogs-group": "/ecs/ai-inference-gateway",
+            "awslogs-region": "REGION",
+            "awslogs-stream-prefix": "gateway"
+          }
+        }
+      }
+    ]
+  },
+  "router": {
+    "family": "ai-inference-router",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "512",
+    "memory": "1024",
+    "executionRoleArn": "arn:aws:iam::ACCOUNT:role/ecsTaskExecutionRole",
+    "taskRoleArn": "arn:aws:iam::ACCOUNT:role/ai-inference-router-task",
+    "containerDefinitions": [
+      {
+        "name": "router",
+        "image": "ACCOUNT.dkr.ecr.REGION.amazonaws.com/ai-router:latest",
+        "portMappings": [{ "containerPort": 8081, "protocol": "tcp" }],
+        "environment": [
+          { "name": "PORT", "value": "8081" },
+          { "name": "PROVIDER_MODE", "value": "bedrock" },
+          { "name": "AWS_REGION", "value": "REGION" },
+          { "name": "REDIS_URL", "value": "redis://elasticache.internal:6379/0" },
+          { "name": "ROUTING_POLICY", "value": "failover" },
+          { "name": "ROUTING_PRIMARY", "value": "bedrock" },
+          { "name": "ROUTING_FALLBACK", "value": "mock" },
+          { "name": "CACHE_ENABLED", "value": "true" },
+          { "name": "BUDGET_ENABLED", "value": "true" },
+          {
+            "name": "MODEL_MAP",
+            "value": "gpt-proxy=bedrock:anthropic.claude-3-haiku-20240307-v1:0;mock-small=mock:mock-small"
+          }
+        ],
+        "healthCheck": {
+          "command": [
+            "CMD-SHELL",
+            "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')\""
+          ],
+          "interval": 10,
+          "timeout": 5,
+          "retries": 3,
+          "startPeriod": 20
+        },
+        "logConfiguration": {
+          "logDriver": "awslogs",
+          "options": {
+            "awslogs-group": "/ecs/ai-inference-router",
+            "awslogs-region": "REGION",
+            "awslogs-stream-prefix": "router"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -36,14 +36,14 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 
 | Feature | Status |
 |---------|--------|
-| OpenAI-shaped `POST /v1/chat/completions` | Done (Step 1) |
+| OpenAI-shaped `POST /v1/chat/completions` | Done |
 | Mock provider for local / CI (no cloud keys) | Done |
-| Multi-provider routing (Bedrock + Vertex) + failover | Done (Step 2) |
-| Semantic response cache (Redis) | Done (Step 3) |
-| SSE token streaming | Done (Step 4) |
-| Per-tenant API keys + USD/token budgets | Done (Step 5) |
-| Prometheus metrics + Grafana + k6 p95 evidence | Done (Step 6) |
-| Multi-cloud deploy docs | Planned (Step 7) |
+| Multi-provider routing (Bedrock + Vertex) + failover | Done |
+| Semantic response cache (Redis) | Done |
+| SSE token streaming | Done |
+| Per-tenant API keys + USD/token budgets | Done |
+| Prometheus metrics + Grafana + k6 p95 evidence | Done |
+| Multi-cloud deploy sketches (AWS + GCP + Helm) | Done |
 
 ## Quick start
 
@@ -175,8 +175,30 @@ apps/router/      # FastAPI routing engine
 packages/shared/  # Shared OpenAPI / schemas
 monitoring/       # Prometheus + Grafana + alerts
 load/             # k6 scripts + RESULTS.md
-deploy/           # AWS / GCP / Helm sketches (later)
+deploy/           # AWS / GCP / Helm sketches
 ```
+
+## Deploy (AWS + GCP)
+
+Sketches live under [`deploy/`](deploy/) — not a turnkey production platform:
+
+| Path | Runtime | Provider focus |
+|------|---------|----------------|
+| [`deploy/aws/`](deploy/aws/) | ECS Fargate (+ EKS notes) | Bedrock + IAM least privilege |
+| [`deploy/gcp/`](deploy/gcp/) | Cloud Run (+ GKE notes) | Vertex AI + IAM least privilege |
+| [`deploy/helm/`](deploy/helm/) | kind / any Kubernetes | mock by default |
+
+Build the router with cloud SDKs only when needed:
+
+```bash
+docker build --build-arg INSTALL_EXTRAS='[bedrock]' -t ai-router:bedrock ./apps/router
+docker build --build-arg INSTALL_EXTRAS='[vertex]' -t ai-router:vertex ./apps/router
+docker build --build-arg INSTALL_EXTRAS='[cloud]' -t ai-router:cloud ./apps/router
+```
+
+Inject API keys and cloud credentials from the platform secret store
+(AWS Secrets Manager / SSM, GCP Secret Manager). No secrets belong in git.
+See [`deploy/README.md`](deploy/README.md) for topology, IAM, and verify curls.
 
 ## Configuration
 

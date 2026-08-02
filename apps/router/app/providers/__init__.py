@@ -69,7 +69,7 @@ def reset_routing_engine() -> None:
     _engine = None
 
 
-# Back-compat for Step 1 call sites / health checks that expect a single provider.
+# Back-compat for call sites / health checks that expect a single provider.
 def get_provider() -> Provider:
     engine = get_routing_engine()
     providers = engine.providers

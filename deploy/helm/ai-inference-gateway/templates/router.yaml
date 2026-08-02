@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router
+  labels:
+    {{- include "ai-inference-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+spec:
+  replicas: {{ .Values.replicaCount.router }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: router
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: router
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: router
+          image: "{{ .Values.image.router.repository }}:{{ .Values.image.router.tag }}"
+          imagePullPolicy: {{ .Values.image.router.pullPolicy }}
+          ports:
+            - containerPort: 8081
+          env:
+            - name: PORT
+              value: "8081"
+            - name: PROVIDER_MODE
+              value: {{ .Values.router.providerMode | quote }}
+            - name: REDIS_URL
+              value: {{ .Values.router.redisUrl | quote }}
+            - name: ROUTING_POLICY
+              value: {{ .Values.router.routingPolicy | quote }}
+            - name: ROUTING_PRIMARY
+              value: {{ .Values.router.routingPrimary | quote }}
+            - name: ROUTING_FALLBACK
+              value: {{ .Values.router.routingFallback | quote }}
+            - name: CACHE_ENABLED
+              value: {{ .Values.router.cacheEnabled | quote }}
+            - name: BUDGET_ENABLED
+              value: {{ .Values.router.budgetEnabled | quote }}
+            - name: MODEL_MAP
+              value: {{ .Values.router.modelMap | quote }}
+            {{- if .Values.router.awsRegion }}
+            - name: AWS_REGION
+              value: {{ .Values.router.awsRegion | quote }}
+            {{- end }}
+            {{- if .Values.router.googleCloudProject }}
+            - name: GOOGLE_CLOUD_PROJECT
+              value: {{ .Values.router.googleCloudProject | quote }}
+            - name: GOOGLE_CLOUD_LOCATION
+              value: {{ .Values.router.googleCloudLocation | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources.router | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: router
+  labels:
+    {{- include "ai-inference-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+spec:
+  type: {{ .Values.service.router.type }}
+  selector:
+    app.kubernetes.io/component: router
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.service.router.port }}
+      targetPort: 8081
