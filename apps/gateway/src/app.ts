@@ -14,6 +14,16 @@ import {
   upstreamErrors,
 } from "./metrics.js";
 import { openApiDocument, swaggerUiHtml } from "./openapi.js";
+import { resolveRequestId } from "./requestId.js";
+import {
+  endSpanError,
+  endSpanOk,
+  getTracer,
+  initTracing,
+  injectTraceHeaders,
+  startRequestSpan,
+  withSpanContext,
+} from "./tracing.js";
 
 type ChatBody = {
   model: string;
@@ -21,6 +31,12 @@ type ChatBody = {
   stream?: boolean;
   max_tokens?: number;
   temperature?: number;
+};
+
+type RequestExtras = FastifyRequest & {
+  _startedAt?: number;
+  tenantId?: string;
+  requestId?: string;
 };
 
 const PUBLIC_PATHS = new Set([
@@ -38,17 +54,29 @@ function routeLabel(url: string): string {
 }
 
 export async function buildServer(config: GatewayConfig): Promise<FastifyInstance> {
+  initTracing({
+    enabled: config.otelEnabled,
+    serviceName: config.otelServiceName,
+    otlpEndpoint: config.otelExporterOtlpEndpoint,
+    consoleExporter: config.otelConsoleExporter,
+  });
+
   const app = Fastify({
     logger: { level: config.logLevel },
     bodyLimit: config.maxBodyBytes,
     requestTimeout: 120_000,
   });
+  const tracer = getTracer("gateway");
 
   app.setErrorHandler((err, request, reply) => {
     const statusCode =
       typeof err === "object" && err && "statusCode" in err
         ? Number((err as { statusCode?: number }).statusCode)
         : 500;
+    const requestId = (request as RequestExtras).requestId;
+    if (requestId) {
+      void reply.header("x-request-id", requestId);
+    }
     if (statusCode === 413) {
       bodyRejected.inc({ reason: "too_large" });
       return reply.code(413).send({
@@ -58,7 +86,7 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
         },
       });
     }
-    request.log.error({ err }, "request error");
+    request.log.error({ err, request_id: requestId }, "request error");
     if (!reply.sent) {
       return reply.code(statusCode >= 400 ? statusCode : 500).send({
         error: {
@@ -70,7 +98,12 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
   });
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    (request as FastifyRequest & { _startedAt?: number })._startedAt = performance.now();
+    const extras = request as RequestExtras;
+    extras._startedAt = performance.now();
+    const requestId = resolveRequestId(request.headers["x-request-id"]);
+    extras.requestId = requestId;
+    void reply.header("x-request-id", requestId);
+
     const path = (request.url.split("?")[0] ?? request.url) as string;
     if (PUBLIC_PATHS.has(path)) {
       return;
@@ -95,11 +128,11 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
         },
       });
     }
-    (request as FastifyRequest & { tenantId?: string }).tenantId = tenant;
+    extras.tenantId = tenant;
   });
 
   app.addHook("onResponse", async (request, reply) => {
-    const started = (request as FastifyRequest & { _startedAt?: number })._startedAt;
+    const started = (request as RequestExtras)._startedAt;
     if (started === undefined) return;
     const seconds = (performance.now() - started) / 1000;
     requestDuration.observe(
@@ -130,6 +163,8 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
   );
 
   app.post<{ Body: ChatBody }>("/v1/chat/completions", async (request, reply) => {
+    const extras = request as RequestExtras;
+    const requestId = extras.requestId ?? resolveRequestId(undefined);
     const body = request.body;
     if (!body?.model || !Array.isArray(body.messages) || body.messages.length === 0) {
       bodyRejected.inc({ reason: "invalid_schema" });
@@ -141,114 +176,145 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
       });
     }
 
-    const tenantId =
-      (request as FastifyRequest & { tenantId?: string }).tenantId ?? "default";
-
-    const forwardHeaders: Record<string, string> = {
-      "content-type": "application/json",
-      "x-tenant-id": tenantId,
-    };
-    const cacheBypass = request.headers["x-cache-bypass"];
-    if (typeof cacheBypass === "string" && cacheBypass.length > 0) {
-      forwardHeaders["x-cache-bypass"] = cacheBypass;
-    }
-
+    const tenantId = extras.tenantId ?? "default";
     const wantStream = Boolean(body.stream);
-    const abort = new AbortController();
-    // Abort upstream only on client disconnect — not on request 'close', which
-    // fires after the body is fully read and would cancel every proxy call.
-    const onClientGone = () => {
-      if (!reply.raw.writableEnded) {
-        abort.abort();
+
+    const span = startRequestSpan(tracer, "gateway.chat.completions", {
+      "http.request_id": requestId,
+      "tenant.id": tenantId,
+      "llm.model": body.model,
+      "llm.stream": wantStream,
+      "http.route": "/v1/chat/completions",
+    });
+
+    return withSpanContext(span, async () => {
+      const forwardHeaders: Record<string, string> = {
+        "content-type": "application/json",
+        "x-tenant-id": tenantId,
+        "x-request-id": requestId,
+      };
+      const cacheBypass = request.headers["x-cache-bypass"];
+      if (typeof cacheBypass === "string" && cacheBypass.length > 0) {
+        forwardHeaders["x-cache-bypass"] = cacheBypass;
       }
-    };
-    request.raw.on("aborted", onClientGone);
-    reply.raw.on("close", onClientGone);
+      injectTraceHeaders(forwardHeaders, span);
 
-    let upstream: Response;
-    try {
-      upstream = await fetch(`${config.routerUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: forwardHeaders,
-        body: JSON.stringify(body),
-        signal: abort.signal,
-      });
-    } catch (err) {
-      request.raw.off("aborted", onClientGone);
-      reply.raw.off("close", onClientGone);
-      if (abort.signal.aborted) {
-        return reply;
-      }
-      upstreamErrors.inc({ kind: "unreachable" });
-      request.log.error({ err }, "router unreachable");
-      return reply.code(502).send({
-        error: {
-          message: "Router unreachable",
-          type: "upstream_error",
-        },
-      });
-    }
+      const abort = new AbortController();
+      // Abort upstream only on client disconnect — not on request 'close', which
+      // fires after the body is fully read and would cancel every proxy call.
+      const onClientGone = () => {
+        if (!reply.raw.writableEnded) {
+          abort.abort();
+        }
+      };
+      request.raw.on("aborted", onClientGone);
+      reply.raw.on("close", onClientGone);
 
-    if (upstream.status >= 500) {
-      upstreamErrors.inc({ kind: "upstream_5xx" });
-    }
-
-    // Surface soft budget warnings from the router.
-    const budgetWarning = upstream.headers.get("x-budget-warning");
-    if (budgetWarning) {
-      reply.header("x-budget-warning", budgetWarning);
-    }
-
-    const contentType = upstream.headers.get("content-type") ?? "application/json";
-    const isEventStream =
-      wantStream && contentType.toLowerCase().includes("text/event-stream");
-
-    if (isEventStream && upstream.body) {
-      // Pipe SSE without buffering; headers flush as soon as the stream starts.
-      reply.code(upstream.status);
-      reply.header("content-type", "text/event-stream");
-      reply.header("cache-control", "no-cache");
-      reply.header("connection", "keep-alive");
-      reply.header("x-accel-buffering", "no");
-
-      const nodeStream = Readable.fromWeb(
-        upstream.body as import("node:stream/web").ReadableStream,
-      );
-
-      nodeStream.on("error", (err) => {
-        request.log.error({ err }, "upstream SSE stream error");
-        abort.abort();
-      });
-      nodeStream.on("close", () => {
-        request.raw.off("aborted", onClientGone);
-        reply.raw.off("close", onClientGone);
-      });
-      nodeStream.on("end", () => {
-        request.raw.off("aborted", onClientGone);
-        reply.raw.off("close", onClientGone);
-      });
-
-      return reply.send(nodeStream);
-    }
-
-    try {
-      const text = await upstream.text();
-      reply.code(upstream.status);
-      reply.header("content-type", contentType);
-      if (!text.length) {
-        return reply.send(null);
-      }
+      let upstream: Response;
       try {
-        return reply.send(JSON.parse(text));
-      } catch {
-        return reply.send({
-          error: { message: text, type: "upstream_error" },
+        upstream = await fetch(`${config.routerUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: forwardHeaders,
+          body: JSON.stringify(body),
+          signal: abort.signal,
+        });
+      } catch (err) {
+        request.raw.off("aborted", onClientGone);
+        reply.raw.off("close", onClientGone);
+        if (abort.signal.aborted) {
+          endSpanOk(span);
+          return reply;
+        }
+        upstreamErrors.inc({ kind: "unreachable" });
+        request.log.error({ err, request_id: requestId }, "router unreachable");
+        endSpanError(span, err);
+        return reply.code(502).send({
+          error: {
+            message: "Router unreachable",
+            type: "upstream_error",
+          },
         });
       }
-    } finally {
-      request.raw.off("aborted", onClientGone);
-      reply.raw.off("close", onClientGone);
-    }
+
+      span.setAttribute("http.status_code", upstream.status);
+      if (upstream.status >= 500) {
+        upstreamErrors.inc({ kind: "upstream_5xx" });
+      }
+
+      // Surface soft budget warnings from the router.
+      const budgetWarning = upstream.headers.get("x-budget-warning");
+      if (budgetWarning) {
+        reply.header("x-budget-warning", budgetWarning);
+      }
+      const upstreamRequestId = upstream.headers.get("x-request-id");
+      if (upstreamRequestId) {
+        reply.header("x-request-id", upstreamRequestId);
+      } else {
+        reply.header("x-request-id", requestId);
+      }
+
+      const contentType = upstream.headers.get("content-type") ?? "application/json";
+      const isEventStream =
+        wantStream && contentType.toLowerCase().includes("text/event-stream");
+
+      if (isEventStream && upstream.body) {
+        // Pipe SSE without buffering; headers flush as soon as the stream starts.
+        reply.code(upstream.status);
+        reply.header("content-type", "text/event-stream");
+        reply.header("cache-control", "no-cache");
+        reply.header("connection", "keep-alive");
+        reply.header("x-accel-buffering", "no");
+
+        const nodeStream = Readable.fromWeb(
+          upstream.body as import("node:stream/web").ReadableStream,
+        );
+
+        nodeStream.on("error", (err) => {
+          request.log.error({ err, request_id: requestId }, "upstream SSE stream error");
+          abort.abort();
+          endSpanError(span, err);
+        });
+        nodeStream.on("close", () => {
+          request.raw.off("aborted", onClientGone);
+          reply.raw.off("close", onClientGone);
+        });
+        nodeStream.on("end", () => {
+          request.raw.off("aborted", onClientGone);
+          reply.raw.off("close", onClientGone);
+          if (upstream.status >= 500) {
+            endSpanError(span, new Error(`upstream status ${upstream.status}`));
+          } else {
+            endSpanOk(span);
+          }
+        });
+
+        return reply.send(nodeStream);
+      }
+
+      try {
+        const text = await upstream.text();
+        reply.code(upstream.status);
+        reply.header("content-type", contentType);
+        if (upstream.status >= 500) {
+          endSpanError(span, new Error(`upstream status ${upstream.status}`));
+        } else {
+          endSpanOk(span);
+        }
+        if (!text.length) {
+          return reply.send(null);
+        }
+        try {
+          return reply.send(JSON.parse(text));
+        } catch {
+          return reply.send({
+            error: { message: text, type: "upstream_error" },
+          });
+        }
+      } finally {
+        request.raw.off("aborted", onClientGone);
+        reply.raw.off("close", onClientGone);
+      }
+    });
   });
 
   return app;

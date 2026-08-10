@@ -5,7 +5,7 @@ export const openApiDocument = {
     title: "AI Inference Gateway",
     version: "0.6.0",
     description:
-      "OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, and per-tenant budgets.",
+      "OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, per-tenant budgets, and distributed tracing.",
   },
   servers: [{ url: "http://localhost:18080" }],
   paths: {
@@ -40,6 +40,14 @@ export const openApiDocument = {
         summary: "Create a chat completion",
         security: [{ ApiKeyAuth: [] }],
         parameters: [
+          {
+            name: "X-Request-Id",
+            in: "header",
+            required: false,
+            description:
+              "Optional correlation id (echoed on the response and forwarded upstream). Generated when omitted or invalid.",
+            schema: { type: "string", maxLength: 128 },
+          },
           {
             name: "X-Cache-Bypass",
             in: "header",

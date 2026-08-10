@@ -72,12 +72,14 @@ jobs:
       - name: Chat completion + metrics
         run: |
           set -euo pipefail
-          curl -sf http://127.0.0.1:18080/v1/chat/completions \
+          curl -sD /tmp/headers.txt -o /tmp/completion.json \
+            http://127.0.0.1:18080/v1/chat/completions \
             -H 'Content-Type: application/json' \
             -H 'X-API-Key: demo-key-change-me' \
-            -d '{"model":"mock-small","messages":[{"role":"user","content":"ci smoke"}]}' \
-            | tee /tmp/completion.json
+            -H 'X-Request-Id: ci-smoke-req-001' \
+            -d '{"model":"mock-small","messages":[{"role":"user","content":"ci smoke"}]}'
           grep -q '"provider"' /tmp/completion.json
+          grep -qi 'x-request-id: ci-smoke-req-001' /tmp/headers.txt
           curl -sf http://127.0.0.1:18080/metrics | grep -q 'gateway_request_duration_seconds'
           curl -sf http://127.0.0.1:18081/metrics | grep -q 'router_request_duration_seconds'
           curl -sf http://127.0.0.1:18080/openapi.json | grep -q 'AI Inference Gateway'

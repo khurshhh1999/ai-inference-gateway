@@ -31,6 +31,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | **Redis** | 6379 (internal) | Cache vectors / keys + per-tenant usage counters |
 | **Prometheus** | 9090 (host **19090**) | Metrics scrape (compose profile `monitoring`) |
 | **Grafana** | 3000 (host **13000**) | Dashboards (compose profile `monitoring`) |
+| **Jaeger** | 16686 (host **16686**) | Trace UI (compose profile `monitoring`) |
 
 ## Key features
 
@@ -43,6 +44,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | SSE token streaming | Done |
 | Per-tenant API keys + USD/token budgets | Done |
 | Prometheus metrics + Grafana + k6 p95 evidence | Done |
+| OpenTelemetry traces + `X-Request-Id` correlation | Done |
 | Multi-cloud deploy sketches (AWS + GCP + Helm) | Done |
 
 ## Quick start
@@ -67,9 +69,13 @@ so it does not collide with other local stacks on 8080/8081. Override with
 With observability:
 
 ```bash
+# Optional: export traces to Jaeger (compose network)
+# echo 'OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318' >> .env
+
 docker compose --profile monitoring up --build
 # Prometheus http://localhost:19090
 # Grafana    http://localhost:13000  (admin / admin by default)
+# Jaeger UI  http://localhost:16686
 ```
 
 ### Chat completion (mock)
@@ -107,7 +113,7 @@ chmod +x scripts/demo_streaming.sh
 ./scripts/demo_streaming.sh
 ```
 
-### Health, metrics, OpenAPI
+### Health, metrics, OpenAPI, tracing
 
 ```bash
 curl -s http://localhost:18080/health
@@ -121,10 +127,31 @@ curl -s http://localhost:18081/v1/tenants/default/usage
 curl -s http://localhost:18081/v1/tenants/default/budget
 ```
 
+Every request gets an `X-Request-Id` (client-supplied or generated). The gateway
+forwards it to the router, echoes it on the response, and attaches it to
+OpenTelemetry spans together with W3C `traceparent` propagation
+(gateway → router → provider attempt). Spans are created whenever
+`OTEL_ENABLED=true` (default). Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export via
+OTLP HTTP (e.g. `http://jaeger:4318` with the monitoring profile).
+
+```bash
+# Echo / round-trip a correlation id
+curl -sD - -o /dev/null http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: demo-key-change-me" \
+  -H "X-Request-Id: demo-trace-001" \
+  -d '{"model":"mock-small","messages":[{"role":"user","content":"hi"}]}' \
+  | grep -i x-request-id
+
+chmod +x scripts/demo_tracing.sh
+./scripts/demo_tracing.sh
+```
+
 Stable Prometheus names use `gateway_*` / `router_*` prefixes with explicit
 histogram buckets for p95. Grafana dashboard **AI Inference Gateway Overview**
 is provisioned under the `monitoring` profile; alerts cover error rate, miss
-p95, budget burn, and provider errors (`monitoring/alerts.yml`).
+p95, budget burn, and provider errors (`monitoring/alerts.yml`). Jaeger is
+included in the same profile for distributed traces.
 
 ### Per-tenant budgets
 
@@ -233,6 +260,12 @@ Copy `.env.example` → `.env`. Important variables:
 | `ROUTER_HOST_PORT` | `18081` | Host port for the router |
 | `PROMETHEUS_HOST_PORT` | `19090` | Host port for Prometheus (`--profile monitoring`) |
 | `GRAFANA_HOST_PORT` | `13000` | Host port for Grafana (`--profile monitoring`) |
+| `JAEGER_UI_HOST_PORT` | `16686` | Host port for Jaeger UI (`--profile monitoring`) |
+| `OTEL_ENABLED` | `true` | Create OpenTelemetry spans (gateway + router) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | OTLP HTTP base URL (e.g. `http://jaeger:4318`); empty = no export |
+| `OTEL_SERVICE_NAME_GATEWAY` | `gateway` | `service.name` for gateway spans |
+| `OTEL_SERVICE_NAME_ROUTER` | `router` | `service.name` for router spans |
+| `OTEL_CONSOLE_EXPORTER` | `false` | Print spans to stdout (debug) |
 
 Cloud credentials (Bedrock / Vertex) are optional and only required when
 `PROVIDER_MODE` is `bedrock`, `vertex`, or `multi` and you want real cloud calls.

@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AI Inference Gateway
   version: 0.6.0
-  description: OpenAI-shaped chat completions edge for multi-cloud LLM routing.
+  description: OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, budgets, and tracing.
 servers:
   - url: http://localhost:18080
 paths:
@@ -36,6 +36,7 @@ paths:
       security:
         - ApiKeyAuth: []
       parameters:
+        - $ref: "#/components/parameters/RequestId"
         - $ref: "#/components/parameters/CacheBypass"
       requestBody:
         required: true
@@ -50,6 +51,7 @@ paths:
             When `stream` is true, OpenAI-shaped SSE (`text/event-stream`) with
             `chat.completion.chunk` events ending in `data: [DONE]`.
             Soft budget warnings may include header `X-Budget-Warning: soft`.
+            Every response includes `X-Request-Id` for log/trace correlation.
           content:
             application/json:
               schema:
@@ -90,6 +92,16 @@ components:
       schema:
         type: string
         enum: ["1", "true"]
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: |
+        Optional correlation id echoed on the response and attached to
+        OpenTelemetry spans. Generated when omitted or invalid.
+      schema:
+        type: string
+        maxLength: 128
   securitySchemes:
     ApiKeyAuth:
       type: apiKey

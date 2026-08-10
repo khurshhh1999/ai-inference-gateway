@@ -6,6 +6,11 @@ export type GatewayConfig = {
   logLevel: string;
   /** Max JSON body size in bytes (auth + DoS hardening). */
   maxBodyBytes: number;
+  /** OpenTelemetry tracing (spans always local; OTLP when endpoint set). */
+  otelEnabled: boolean;
+  otelServiceName: string;
+  otelExporterOtlpEndpoint: string;
+  otelConsoleExporter: boolean;
 };
 
 /** Parse `key:tenant,other:acme` (or JSON object) into a key→tenant map. */
@@ -42,11 +47,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const tenantApiKeys =
     Object.keys(mapped).length > 0 ? mapped : { [demoKey]: "default" };
 
+  const otelEnabledRaw = (env.OTEL_ENABLED ?? "true").trim().toLowerCase();
+  const otelConsoleRaw = (env.OTEL_CONSOLE_EXPORTER ?? "false").trim().toLowerCase();
+
   return {
     port: Number(env.PORT ?? "8080"),
     routerUrl: (env.ROUTER_URL ?? "http://127.0.0.1:8081").replace(/\/$/, ""),
     tenantApiKeys,
     logLevel: env.LOG_LEVEL ?? "info",
     maxBodyBytes: Number(env.MAX_BODY_BYTES ?? String(256 * 1024)),
+    otelEnabled: !["0", "false", "no", "off"].includes(otelEnabledRaw),
+    otelServiceName: (env.OTEL_SERVICE_NAME ?? "gateway").trim() || "gateway",
+    otelExporterOtlpEndpoint: (env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "").trim().replace(/\/$/, ""),
+    otelConsoleExporter: ["1", "true", "yes", "on"].includes(otelConsoleRaw),
   };
 }

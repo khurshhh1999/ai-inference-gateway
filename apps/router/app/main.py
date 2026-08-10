@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.api.chat import router as chat_router
@@ -11,16 +13,68 @@ from app.cache.semantic import get_semantic_cache
 from app.config import settings
 from app.metrics import render_latest
 from app.providers import get_routing_engine
+from app.request_id import resolve_request_id
+from app.tracing import (
+    attach_context,
+    detach_context,
+    extract_context,
+    get_tracer,
+    init_tracing,
+    set_span_error,
+    set_span_ok,
+)
 
 logging.basicConfig(level=settings.log_level.upper())
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    init_tracing(settings)
+    yield
+
 
 app = FastAPI(
     title="AI Inference Router",
-    version="0.6.0",
+    version="0.8.0",
     description="Routing engine for the AI Inference Gateway",
+    lifespan=lifespan,
 )
 
 app.include_router(chat_router)
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+    request_id = resolve_request_id(request.headers.get("x-request-id"))
+    request.state.request_id = request_id
+
+    parent_ctx = extract_context(request.headers)
+    token = attach_context(parent_ctx)
+    tracer = get_tracer("router")
+    try:
+        with tracer.start_as_current_span(
+            f"HTTP {request.method} {request.url.path}",
+            attributes={
+                "http.request_id": request_id,
+                "http.method": request.method,
+                "http.route": request.url.path,
+            },
+        ) as span:
+            try:
+                response: Response = await call_next(request)
+            except Exception as exc:
+                set_span_error(span, exc)
+                raise
+            response.headers["X-Request-Id"] = request_id
+            span.set_attribute("http.status_code", response.status_code)
+            if response.status_code >= 500:
+                span.set_attribute("error", True)
+            else:
+                set_span_ok(span)
+            return response
+    finally:
+        detach_context(token)
 
 
 @app.get("/health")
@@ -59,6 +113,11 @@ async def health() -> JSONResponse:
                 "healthy": budget_ok,
                 "soft_ratio": settings.budget_soft_ratio,
                 "hard_status": settings.budget_hard_status,
+            },
+            "otel": {
+                "enabled": settings.otel_enabled,
+                "service_name": settings.otel_service_name,
+                "otlp_configured": bool(settings.otel_exporter_otlp_endpoint.strip()),
             },
         }
     )

@@ -167,6 +167,12 @@ class Settings(BaseSettings):
     # Per-tenant overrides: acme:usd_day:1.0,tokens_day:5000;beta:usd_month:50
     tenant_budgets: str = ""
 
+    # OpenTelemetry (OTLP HTTP when endpoint set; otherwise in-process spans only)
+    otel_enabled: bool = True
+    otel_service_name: str = "router"
+    otel_exporter_otlp_endpoint: str = ""
+    otel_console_exporter: bool = False
+
     # Cloud (optional — only needed when calling real Bedrock / Vertex)
     aws_region: str = "us-east-1"
     google_cloud_project: str = ""

@@ -32,8 +32,10 @@ def test_chat_completions_mock(client: TestClient) -> None:
             "model": "mock-small",
             "messages": [{"role": "user", "content": "hello gateway"}],
         },
+        headers={"X-Request-Id": "router-test-req-001"},
     )
     assert res.status_code == 200
+    assert res.headers.get("x-request-id") == "router-test-req-001"
     body = res.json()
     assert body["object"] == "chat.completion"
     assert body["provider"] == "mock"
@@ -41,6 +43,15 @@ def test_chat_completions_mock(client: TestClient) -> None:
     assert body["route_reason"] in {"failover", "cost", "latency", "affinity"}
     assert "hello gateway" in body["choices"][0]["message"]["content"]
     assert body["usage"]["total_tokens"] >= 2
+
+
+def test_health_includes_otel(client: TestClient) -> None:
+    res = client.get("/health")
+    assert res.status_code == 200
+    otel = res.json()["otel"]
+    assert otel["enabled"] is True
+    assert otel["service_name"] == "router"
+    assert "otlp_configured" in otel
 
 
 def test_chat_completions_validation(client: TestClient) -> None:

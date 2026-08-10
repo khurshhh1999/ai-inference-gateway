@@ -29,9 +29,11 @@ from app.streaming import (
     iter_sse_from_deltas,
     iter_sse_from_text,
 )
+from app.tracing import get_tracer, set_span_error, set_span_ok
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+tracer = get_tracer("router.chat")
 
 
 def _truthy_bypass(value: str | None) -> bool:
@@ -85,6 +87,7 @@ async def chat_completions(
     bypass = _truthy_bypass(x_cache_bypass)
     cache = get_semantic_cache()
     prompt = prompt_from_messages(body.messages)
+    request_id = getattr(request.state, "request_id", None) or "unknown"
 
     if body.stream:
         return await _stream_completions(
@@ -94,64 +97,96 @@ async def chat_completions(
             bypass=bypass,
             prompt=prompt,
             started=started,
+            request_id=request_id,
         )
 
     cached = False
     status = 200
-    try:
-        if not bypass:
+    with tracer.start_as_current_span(
+        "router.chat.completions",
+        attributes={
+            "http.request_id": request_id,
+            "tenant.id": tenant,
+            "llm.model": body.model,
+            "llm.stream": False,
+            "cache.bypass": bypass,
+        },
+    ) as span:
+        try:
+            if not bypass:
+                with tracer.start_as_current_span("cache.lookup") as cache_span:
+                    try:
+                        hit = await cache.lookup(
+                            tenant=tenant, model=body.model, prompt=prompt
+                        )
+                    except Exception:
+                        logger.exception(
+                            "cache lookup failed tenant=%s model=%s request_id=%s",
+                            tenant,
+                            body.model,
+                            request_id,
+                        )
+                        hit = None
+                    cache_span.set_attribute("cache.hit", hit is not None)
+                    if hit is not None:
+                        cached = True
+                        span.set_attribute("cache.hit", True)
+                        set_span_ok(span)
+                        return hit.response
+
+            meter = get_budget_meter()
+            with tracer.start_as_current_span("budget.check") as budget_span:
+                try:
+                    check = await meter.check(tenant)
+                except BudgetExceededError as exc:
+                    status = exc.status_code
+                    budget_span.set_attribute("budget.exceeded", True)
+                    set_span_error(span, exc)
+                    raise _budget_exceeded_http(exc) from exc
+                budget_span.set_attribute("budget.soft_warning", check.soft_warning)
+            _apply_budget_headers(response, soft_warning=check.soft_warning)
+
+            engine = get_routing_engine()
             try:
-                hit = await cache.lookup(tenant=tenant, model=body.model, prompt=prompt)
-            except Exception:
-                logger.exception(
-                    "cache lookup failed tenant=%s model=%s", tenant, body.model
+                decision = await engine.complete(body)
+            except AllProvidersFailedError as exc:
+                status = 502
+                logger.error(
+                    "all providers failed attempts=%s request_id=%s",
+                    exc.attempts,
+                    request_id,
                 )
-                hit = None
-            if hit is not None:
-                cached = True
-                return hit.response
+                set_span_error(span, exc)
+                raise _all_providers_failed_http(exc) from exc
 
-        meter = get_budget_meter()
-        try:
-            check = await meter.check(tenant)
-        except BudgetExceededError as exc:
-            status = exc.status_code
-            raise _budget_exceeded_http(exc) from exc
-        _apply_budget_headers(response, soft_warning=check.soft_warning)
-
-        engine = get_routing_engine()
-        try:
-            decision = await engine.complete(body)
-        except AllProvidersFailedError as exc:
-            status = 502
-            logger.error("all providers failed attempts=%s", exc.attempts)
-            raise _all_providers_failed_http(exc) from exc
-
-        completion = decision.response
-        await _meter_completion(
-            tenant=tenant,
-            model=body.model,
-            response=completion,
-            provider=decision.provider,
-        )
-        await _maybe_store_cache(
-            tenant=tenant,
-            model=body.model,
-            prompt=prompt,
-            response=completion,
-            provider=decision.provider,
-            bypass=bypass,
-        )
-        return completion
-    finally:
-        observe_request(
-            method="POST",
-            route="/v1/chat/completions",
-            status=status,
-            cached=cached,
-            stream=False,
-            seconds=time.perf_counter() - started,
-        )
+            completion = decision.response
+            span.set_attribute("llm.provider", decision.provider)
+            span.set_attribute("route.reason", decision.reason)
+            await _meter_completion(
+                tenant=tenant,
+                model=body.model,
+                response=completion,
+                provider=decision.provider,
+            )
+            await _maybe_store_cache(
+                tenant=tenant,
+                model=body.model,
+                prompt=prompt,
+                response=completion,
+                provider=decision.provider,
+                bypass=bypass,
+            )
+            set_span_ok(span)
+            return completion
+        finally:
+            observe_request(
+                method="POST",
+                route="/v1/chat/completions",
+                status=status,
+                cached=cached,
+                stream=False,
+                seconds=time.perf_counter() - started,
+            )
 
 
 async def _stream_completions(
@@ -162,137 +197,180 @@ async def _stream_completions(
     bypass: bool,
     prompt: str,
     started: float,
+    request_id: str,
 ) -> StreamingResponse:
     cache = get_semantic_cache()
     status = 200
     was_cached = False
 
-    try:
-        if not bypass:
-            try:
-                hit = await cache.lookup(tenant=tenant, model=body.model, prompt=prompt)
-            except Exception:
-                logger.exception(
-                    "cache lookup failed tenant=%s model=%s stream=1", tenant, body.model
-                )
-                hit = None
-            if hit is not None:
-                was_cached = True
-                cached = hit.response
+    with tracer.start_as_current_span(
+        "router.chat.completions",
+        attributes={
+            "http.request_id": request_id,
+            "tenant.id": tenant,
+            "llm.model": body.model,
+            "llm.stream": True,
+            "cache.bypass": bypass,
+        },
+    ) as span:
+        try:
+            if not bypass:
+                with tracer.start_as_current_span("cache.lookup") as cache_span:
+                    try:
+                        hit = await cache.lookup(
+                            tenant=tenant, model=body.model, prompt=prompt
+                        )
+                    except Exception:
+                        logger.exception(
+                            "cache lookup failed tenant=%s model=%s stream=1 request_id=%s",
+                            tenant,
+                            body.model,
+                            request_id,
+                        )
+                        hit = None
+                    cache_span.set_attribute("cache.hit", hit is not None)
+                    if hit is not None:
+                        was_cached = True
+                        cached = hit.response
+                        span.set_attribute("cache.hit", True)
 
-                async def _cached_events() -> AsyncIterator[str]:
-                    async for frame in iter_sse_from_text(
-                        text=cached.choices[0].message.content,
-                        model=cached.model,
-                        provider=cached.provider,
-                        completion_id=cached.id,
-                        created=cached.created,
-                        cached=True,
-                        route_reason="cache_hit",
+                        async def _cached_events() -> AsyncIterator[str]:
+                            async for frame in iter_sse_from_text(
+                                text=cached.choices[0].message.content,
+                                model=cached.model,
+                                provider=cached.provider,
+                                completion_id=cached.id,
+                                created=cached.created,
+                                cached=True,
+                                route_reason="cache_hit",
+                            ):
+                                if await request.is_disconnected():
+                                    logger.info(
+                                        "client disconnected during cached stream "
+                                        "request_id=%s",
+                                        request_id,
+                                    )
+                                    break
+                                yield frame
+
+                        set_span_ok(span)
+                        return StreamingResponse(
+                            _cached_events(),
+                            media_type="text/event-stream",
+                            headers=_sse_headers(request_id),
+                        )
+
+            meter = get_budget_meter()
+            with tracer.start_as_current_span("budget.check") as budget_span:
+                try:
+                    check = await meter.check(tenant)
+                except BudgetExceededError as exc:
+                    status = exc.status_code
+                    budget_span.set_attribute("budget.exceeded", True)
+                    set_span_error(span, exc)
+                    raise _budget_exceeded_http(exc) from exc
+                budget_span.set_attribute("budget.soft_warning", check.soft_warning)
+
+            engine = get_routing_engine()
+            try:
+                route = await engine.open_stream(body)
+            except AllProvidersFailedError as exc:
+                status = 502
+                logger.error(
+                    "all providers failed attempts=%s stream=1 request_id=%s",
+                    exc.attempts,
+                    request_id,
+                )
+                set_span_error(span, exc)
+                raise _all_providers_failed_http(exc) from exc
+
+            span.set_attribute("llm.provider", route.provider)
+            span.set_attribute("route.reason", route.reason)
+
+            async def _provider_events() -> AsyncIterator[str]:
+                completed = False
+                accumulated = ""
+                try:
+                    async for frame, accumulated in iter_sse_from_deltas(
+                        route.deltas,
+                        model=route.model,
+                        provider=route.provider,
+                        completion_id=route.completion_id,
+                        created=route.created,
+                        cached=False,
+                        route_reason=route.reason,
                     ):
                         if await request.is_disconnected():
-                            logger.info("client disconnected during cached stream")
+                            logger.info(
+                                "client disconnected mid-stream provider=%s request_id=%s",
+                                route.provider,
+                                request_id,
+                            )
                             break
                         yield frame
+                        if "[DONE]" in frame:
+                            completed = True
+                finally:
+                    await route.aclose()
 
-                return StreamingResponse(
-                    _cached_events(),
-                    media_type="text/event-stream",
-                    headers=_sse_headers(),
-                )
-
-        meter = get_budget_meter()
-        try:
-            check = await meter.check(tenant)
-        except BudgetExceededError as exc:
-            status = exc.status_code
-            raise _budget_exceeded_http(exc) from exc
-
-        engine = get_routing_engine()
-        try:
-            route = await engine.open_stream(body)
-        except AllProvidersFailedError as exc:
-            status = 502
-            logger.error("all providers failed attempts=%s stream=1", exc.attempts)
-            raise _all_providers_failed_http(exc) from exc
-
-        async def _provider_events() -> AsyncIterator[str]:
-            completed = False
-            accumulated = ""
-            try:
-                async for frame, accumulated in iter_sse_from_deltas(
-                    route.deltas,
-                    model=route.model,
-                    provider=route.provider,
-                    completion_id=route.completion_id,
-                    created=route.created,
-                    cached=False,
-                    route_reason=route.reason,
-                ):
-                    if await request.is_disconnected():
-                        logger.info(
-                            "client disconnected mid-stream provider=%s",
-                            route.provider,
-                        )
-                        break
-                    yield frame
-                    if "[DONE]" in frame:
-                        completed = True
-            finally:
-                await route.aclose()
-
-            if completed and accumulated:
-                prompt_tokens = max(1, sum(len(m.content.split()) for m in body.messages))
-                completion = build_completion_from_stream(
-                    completion_id=route.completion_id,
-                    created=route.created,
-                    model=route.model,
-                    content=accumulated,
-                    provider=route.provider,
-                    prompt_tokens=prompt_tokens,
-                    route_reason=route.reason,
-                )
-                await _meter_completion(
-                    tenant=tenant,
-                    model=body.model,
-                    response=completion,
-                    provider=route.provider,
-                )
-                if not bypass:
-                    await _maybe_store_cache(
+                if completed and accumulated:
+                    prompt_tokens = max(
+                        1, sum(len(m.content.split()) for m in body.messages)
+                    )
+                    completion = build_completion_from_stream(
+                        completion_id=route.completion_id,
+                        created=route.created,
+                        model=route.model,
+                        content=accumulated,
+                        provider=route.provider,
+                        prompt_tokens=prompt_tokens,
+                        route_reason=route.reason,
+                    )
+                    await _meter_completion(
                         tenant=tenant,
                         model=body.model,
-                        prompt=prompt,
                         response=completion,
                         provider=route.provider,
-                        bypass=bypass,
                     )
+                    if not bypass:
+                        await _maybe_store_cache(
+                            tenant=tenant,
+                            model=body.model,
+                            prompt=prompt,
+                            response=completion,
+                            provider=route.provider,
+                            bypass=bypass,
+                        )
 
-        headers = _sse_headers()
-        if check.soft_warning:
-            headers["X-Budget-Warning"] = "soft"
-        return StreamingResponse(
-            _provider_events(),
-            media_type="text/event-stream",
-            headers=headers,
-        )
-    finally:
-        observe_request(
-            method="POST",
-            route="/v1/chat/completions",
-            status=status,
-            cached=was_cached,
-            stream=True,
-            seconds=time.perf_counter() - started,
-        )
+            headers = _sse_headers(request_id)
+            if check.soft_warning:
+                headers["X-Budget-Warning"] = "soft"
+            set_span_ok(span)
+            return StreamingResponse(
+                _provider_events(),
+                media_type="text/event-stream",
+                headers=headers,
+            )
+        finally:
+            observe_request(
+                method="POST",
+                route="/v1/chat/completions",
+                status=status,
+                cached=was_cached,
+                stream=True,
+                seconds=time.perf_counter() - started,
+            )
 
 
-def _sse_headers() -> dict[str, str]:
-    return {
+def _sse_headers(request_id: str | None = None) -> dict[str, str]:
+    headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
     }
+    if request_id:
+        headers["X-Request-Id"] = request_id
+    return headers
 
 
 async def _meter_completion(

@@ -46,6 +46,10 @@ services:
       BUDGET_TOKENS_PER_DAY: ${BUDGET_TOKENS_PER_DAY:-1000000}
       BUDGET_TOKENS_PER_MONTH: ${BUDGET_TOKENS_PER_MONTH:-10000000}
       TENANT_BUDGETS: ${TENANT_BUDGETS:-}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME_ROUTER:-router}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_CONSOLE_EXPORTER: ${OTEL_CONSOLE_EXPORTER:-false}
       # Optional cloud credentials (only when PROVIDER_MODE is bedrock/vertex/multi)
       AWS_REGION: ${AWS_REGION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
@@ -77,6 +81,10 @@ services:
       PORT: "8080"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       MAX_BODY_BYTES: ${MAX_BODY_BYTES:-262144}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME_GATEWAY:-gateway}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_CONSOLE_EXPORTER: ${OTEL_CONSOLE_EXPORTER:-false}
     depends_on:
       router:
         condition: service_healthy
@@ -120,3 +128,13 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    profiles: ["monitoring"]
+    ports:
+      - "${JAEGER_UI_HOST_PORT:-16686}:16686"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    # OTLP HTTP is available inside the compose network at http://jaeger:4318
+    # Point gateway/router at it via OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318

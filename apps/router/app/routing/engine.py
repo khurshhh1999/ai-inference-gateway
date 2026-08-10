@@ -19,8 +19,10 @@ from app.providers.base import Provider
 from app.providers.circuit_breaker import CircuitBreaker
 from app.routing.policies import ordered_candidates
 from app.streaming import new_completion_id
+from app.tracing import get_tracer, set_span_error, set_span_ok
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("router.routing")
 
 
 @dataclass
@@ -99,79 +101,95 @@ class RoutingEngine:
                 continue
 
             started = time.perf_counter()
-            try:
-                response = await asyncio.wait_for(provider.complete(request), timeout=timeout_s)
-            except TimeoutError as exc:
-                breaker.record_failure()
-                err = ProviderTimeoutError(provider.name, self._settings.provider_timeout_ms)
-                attempts.append({"provider": provider.name, "error": str(err)})
-                record_provider_error(provider.name, "timeout")
-                observe_provider(
-                    provider=provider.name,
-                    outcome="error",
-                    seconds=time.perf_counter() - started,
-                )
-                logger.warning(
-                    "route fail provider=%s error=timeout timeout_ms=%s",
-                    provider.name,
-                    self._settings.provider_timeout_ms,
-                )
-                # Keep going — failover
-                _ = exc
-                continue
-            except ProviderError as exc:
-                breaker.record_failure()
-                attempts.append({"provider": provider.name, "error": str(exc)})
-                record_provider_error(provider.name, type(exc).__name__)
-                observe_provider(
-                    provider=provider.name,
-                    outcome="error",
-                    seconds=time.perf_counter() - started,
-                )
-                logger.warning(
-                    "route fail provider=%s error=%s retryable=%s",
-                    provider.name,
-                    exc,
-                    exc.retryable,
-                )
-                if not exc.retryable:
-                    # Non-retryable still fails over so multi-cloud stays available.
+            with _tracer.start_as_current_span(
+                f"provider.{provider.name}.complete",
+                attributes={
+                    "provider.name": provider.name,
+                    "llm.model": request.model,
+                    "route.reason": reason,
+                },
+            ) as span:
+                try:
+                    response = await asyncio.wait_for(
+                        provider.complete(request), timeout=timeout_s
+                    )
+                except TimeoutError as exc:
+                    breaker.record_failure()
+                    err = ProviderTimeoutError(
+                        provider.name, self._settings.provider_timeout_ms
+                    )
+                    attempts.append({"provider": provider.name, "error": str(err)})
+                    record_provider_error(provider.name, "timeout")
+                    observe_provider(
+                        provider=provider.name,
+                        outcome="error",
+                        seconds=time.perf_counter() - started,
+                    )
+                    set_span_error(span, err)
+                    logger.warning(
+                        "route fail provider=%s error=timeout timeout_ms=%s",
+                        provider.name,
+                        self._settings.provider_timeout_ms,
+                    )
+                    # Keep going — failover
+                    _ = exc
                     continue
-                continue
-            except Exception as exc:
-                breaker.record_failure()
-                attempts.append({"provider": provider.name, "error": str(exc)})
-                record_provider_error(provider.name, type(exc).__name__)
+                except ProviderError as exc:
+                    breaker.record_failure()
+                    attempts.append({"provider": provider.name, "error": str(exc)})
+                    record_provider_error(provider.name, type(exc).__name__)
+                    observe_provider(
+                        provider=provider.name,
+                        outcome="error",
+                        seconds=time.perf_counter() - started,
+                    )
+                    set_span_error(span, exc)
+                    logger.warning(
+                        "route fail provider=%s error=%s retryable=%s",
+                        provider.name,
+                        exc,
+                        exc.retryable,
+                    )
+                    if not exc.retryable:
+                        # Non-retryable still fails over so multi-cloud stays available.
+                        continue
+                    continue
+                except Exception as exc:
+                    breaker.record_failure()
+                    attempts.append({"provider": provider.name, "error": str(exc)})
+                    record_provider_error(provider.name, type(exc).__name__)
+                    observe_provider(
+                        provider=provider.name,
+                        outcome="error",
+                        seconds=time.perf_counter() - started,
+                    )
+                    set_span_error(span, exc)
+                    logger.exception("route fail provider=%s unexpected error", provider.name)
+                    continue
+
+                breaker.record_success()
                 observe_provider(
                     provider=provider.name,
-                    outcome="error",
+                    outcome="ok",
                     seconds=time.perf_counter() - started,
                 )
-                logger.exception("route fail provider=%s unexpected error", provider.name)
-                continue
-
-            breaker.record_success()
-            observe_provider(
-                provider=provider.name,
-                outcome="ok",
-                seconds=time.perf_counter() - started,
-            )
-            response.provider = provider.name
-            response.route_reason = reason
-            record_route_decision(provider.name, reason)
-            logger.info(
-                "route decision provider=%s reason=%s model=%s attempts=%s",
-                provider.name,
-                reason,
-                request.model,
-                len(attempts) + 1,
-            )
-            return RouteDecision(
-                response=response,
-                reason=reason,
-                provider=provider.name,
-                attempts=attempts,
-            )
+                response.provider = provider.name
+                response.route_reason = reason
+                record_route_decision(provider.name, reason)
+                set_span_ok(span)
+                logger.info(
+                    "route decision provider=%s reason=%s model=%s attempts=%s",
+                    provider.name,
+                    reason,
+                    request.model,
+                    len(attempts) + 1,
+                )
+                return RouteDecision(
+                    response=response,
+                    reason=reason,
+                    provider=provider.name,
+                    attempts=attempts,
+                )
 
         raise AllProvidersFailedError(attempts)
 
@@ -203,116 +221,135 @@ class RoutingEngine:
 
             agen = provider.stream(request)
             started = time.perf_counter()
-            try:
-                first = await asyncio.wait_for(agen.__anext__(), timeout=timeout_s)
-            except StopAsyncIteration:
-                breaker.record_failure()
-                attempts.append(
-                    {"provider": provider.name, "error": "empty_stream"},
-                )
-                record_provider_error(provider.name, "empty_stream")
+            with _tracer.start_as_current_span(
+                f"provider.{provider.name}.stream",
+                attributes={
+                    "provider.name": provider.name,
+                    "llm.model": request.model,
+                    "route.reason": reason,
+                    "llm.stream": True,
+                },
+            ) as span:
+                try:
+                    first = await asyncio.wait_for(agen.__anext__(), timeout=timeout_s)
+                except StopAsyncIteration:
+                    breaker.record_failure()
+                    attempts.append(
+                        {"provider": provider.name, "error": "empty_stream"},
+                    )
+                    record_provider_error(provider.name, "empty_stream")
+                    observe_provider(
+                        provider=provider.name,
+                        outcome="error",
+                        seconds=time.perf_counter() - started,
+                    )
+                    set_span_error(span, "empty_stream")
+                    logger.warning("route fail provider=%s error=empty_stream", provider.name)
+                    continue
+                except TimeoutError:
+                    await _aclose_quiet(agen)
+                    breaker.record_failure()
+                    err = ProviderTimeoutError(
+                        provider.name, self._settings.provider_timeout_ms
+                    )
+                    attempts.append({"provider": provider.name, "error": str(err)})
+                    record_provider_error(provider.name, "timeout")
+                    observe_provider(
+                        provider=provider.name,
+                        outcome="error",
+                        seconds=time.perf_counter() - started,
+                    )
+                    set_span_error(span, err)
+                    logger.warning(
+                        "route fail provider=%s error=timeout timeout_ms=%s stream=1",
+                        provider.name,
+                        self._settings.provider_timeout_ms,
+                    )
+                    continue
+                except NotImplementedError as exc:
+                    await _aclose_quiet(agen)
+                    breaker.record_failure()
+                    attempts.append({"provider": provider.name, "error": str(exc)})
+                    record_provider_error(provider.name, "not_implemented")
+                    observe_provider(
+                        provider=provider.name,
+                        outcome="error",
+                        seconds=time.perf_counter() - started,
+                    )
+                    set_span_error(span, exc)
+                    logger.warning(
+                        "route fail provider=%s error=%s stream=1", provider.name, exc
+                    )
+                    continue
+                except ProviderError as exc:
+                    await _aclose_quiet(agen)
+                    breaker.record_failure()
+                    attempts.append({"provider": provider.name, "error": str(exc)})
+                    record_provider_error(provider.name, type(exc).__name__)
+                    observe_provider(
+                        provider=provider.name,
+                        outcome="error",
+                        seconds=time.perf_counter() - started,
+                    )
+                    set_span_error(span, exc)
+                    logger.warning(
+                        "route fail provider=%s error=%s retryable=%s stream=1",
+                        provider.name,
+                        exc,
+                        exc.retryable,
+                    )
+                    continue
+                except Exception as exc:
+                    await _aclose_quiet(agen)
+                    breaker.record_failure()
+                    attempts.append({"provider": provider.name, "error": str(exc)})
+                    record_provider_error(provider.name, type(exc).__name__)
+                    observe_provider(
+                        provider=provider.name,
+                        outcome="error",
+                        seconds=time.perf_counter() - started,
+                    )
+                    set_span_error(span, exc)
+                    logger.exception(
+                        "route fail provider=%s unexpected error stream=1", provider.name
+                    )
+                    continue
+
+                breaker.record_success()
                 observe_provider(
                     provider=provider.name,
-                    outcome="error",
+                    outcome="ok",
                     seconds=time.perf_counter() - started,
                 )
-                logger.warning("route fail provider=%s error=empty_stream", provider.name)
-                continue
-            except TimeoutError:
-                await _aclose_quiet(agen)
-                breaker.record_failure()
-                err = ProviderTimeoutError(provider.name, self._settings.provider_timeout_ms)
-                attempts.append({"provider": provider.name, "error": str(err)})
-                record_provider_error(provider.name, "timeout")
-                observe_provider(
-                    provider=provider.name,
-                    outcome="error",
-                    seconds=time.perf_counter() - started,
-                )
-                logger.warning(
-                    "route fail provider=%s error=timeout timeout_ms=%s stream=1",
+                record_route_decision(provider.name, reason)
+                set_span_ok(span)
+                logger.info(
+                    "route decision provider=%s reason=%s model=%s attempts=%s stream=1",
                     provider.name,
-                    self._settings.provider_timeout_ms,
+                    reason,
+                    request.model,
+                    len(attempts) + 1,
                 )
-                continue
-            except NotImplementedError as exc:
-                await _aclose_quiet(agen)
-                breaker.record_failure()
-                attempts.append({"provider": provider.name, "error": str(exc)})
-                record_provider_error(provider.name, "not_implemented")
-                observe_provider(
-                    provider=provider.name,
-                    outcome="error",
-                    seconds=time.perf_counter() - started,
-                )
-                logger.warning("route fail provider=%s error=%s stream=1", provider.name, exc)
-                continue
-            except ProviderError as exc:
-                await _aclose_quiet(agen)
-                breaker.record_failure()
-                attempts.append({"provider": provider.name, "error": str(exc)})
-                record_provider_error(provider.name, type(exc).__name__)
-                observe_provider(
-                    provider=provider.name,
-                    outcome="error",
-                    seconds=time.perf_counter() - started,
-                )
-                logger.warning(
-                    "route fail provider=%s error=%s retryable=%s stream=1",
-                    provider.name,
-                    exc,
-                    exc.retryable,
-                )
-                continue
-            except Exception as exc:
-                await _aclose_quiet(agen)
-                breaker.record_failure()
-                attempts.append({"provider": provider.name, "error": str(exc)})
-                record_provider_error(provider.name, type(exc).__name__)
-                observe_provider(
-                    provider=provider.name,
-                    outcome="error",
-                    seconds=time.perf_counter() - started,
-                )
-                logger.exception(
-                    "route fail provider=%s unexpected error stream=1", provider.name
-                )
-                continue
 
-            breaker.record_success()
-            observe_provider(
-                provider=provider.name,
-                outcome="ok",
-                seconds=time.perf_counter() - started,
-            )
-            record_route_decision(provider.name, reason)
-            logger.info(
-                "route decision provider=%s reason=%s model=%s attempts=%s stream=1",
-                provider.name,
-                reason,
-                request.model,
-                len(attempts) + 1,
-            )
+                async def _deltas(
+                    first_delta: str = first,
+                    generator: AsyncIterator[str] = agen,
+                ) -> AsyncIterator[str]:
+                    yield first_delta
+                    async for delta in generator:
+                        yield delta
 
-            async def _deltas(
-                first_delta: str = first,
-                generator: AsyncIterator[str] = agen,
-            ) -> AsyncIterator[str]:
-                yield first_delta
-                async for delta in generator:
-                    yield delta
-
-            deltas = _deltas()
-            return StreamRoute(
-                provider=provider.name,
-                reason=reason,
-                attempts=attempts,
-                completion_id=new_completion_id(provider.name),
-                created=int(time.time()),
-                model=request.model,
-                deltas=deltas,
-                _agen=agen,
-            )
+                deltas = _deltas()
+                return StreamRoute(
+                    provider=provider.name,
+                    reason=reason,
+                    attempts=attempts,
+                    completion_id=new_completion_id(provider.name),
+                    created=int(time.time()),
+                    model=request.model,
+                    deltas=deltas,
+                    _agen=agen,
+                )
 
         raise AllProvidersFailedError(attempts)
 

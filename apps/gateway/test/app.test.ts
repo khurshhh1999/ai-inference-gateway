@@ -201,6 +201,103 @@ describe("gateway", () => {
     assert.equal(res.json().detail.error, "budget_exceeded");
   });
 
+  it("echoes client X-Request-Id and forwards it upstream", async () => {
+    let sawRequestId: string | null = null;
+    let sawTraceparent = false;
+    globalThis.fetch = (async (_input, init) => {
+      const headers = init?.headers as Record<string, string>;
+      sawRequestId = headers["x-request-id"] ?? null;
+      sawTraceparent = typeof headers["traceparent"] === "string";
+      return new Response(
+        JSON.stringify({
+          id: "c1",
+          object: "chat.completion",
+          created: 1,
+          model: "mock-small",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          provider: "mock",
+          cached: false,
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "x-request-id": headers["x-request-id"] ?? "",
+          },
+        },
+      );
+    }) as typeof fetch;
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: {
+        "x-api-key": "demo-key-change-me",
+        "x-request-id": "client-req-abc-001",
+      },
+      payload: {
+        model: "mock-small",
+        messages: [{ role: "user", content: "hi" }],
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.headers["x-request-id"], "client-req-abc-001");
+    assert.equal(sawRequestId, "client-req-abc-001");
+    assert.equal(sawTraceparent, true);
+  });
+
+  it("generates X-Request-Id when missing", async () => {
+    globalThis.fetch = (async (_input, init) => {
+      const headers = init?.headers as Record<string, string>;
+      return new Response(
+        JSON.stringify({
+          id: "c1",
+          object: "chat.completion",
+          created: 1,
+          model: "mock-small",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          provider: "mock",
+          cached: false,
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "x-request-id": headers["x-request-id"] ?? "",
+          },
+        },
+      );
+    }) as typeof fetch;
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { "x-api-key": "demo-key-change-me" },
+      payload: {
+        model: "mock-small",
+        messages: [{ role: "user", content: "hi" }],
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.match(String(res.headers["x-request-id"] ?? ""), /^[0-9a-f-]{36}$/i);
+  });
+
   it("proxies SSE streams without buffering JSON", async () => {
     const sse =
       'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"mock-small","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}],"provider":"mock"}\n\n' +
