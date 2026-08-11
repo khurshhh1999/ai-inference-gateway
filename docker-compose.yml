@@ -81,11 +81,20 @@ services:
       PORT: "8080"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       MAX_BODY_BYTES: ${MAX_BODY_BYTES:-262144}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-redis}
+      RATE_LIMIT_KEY_QPS: ${RATE_LIMIT_KEY_QPS:-10}
+      RATE_LIMIT_KEY_BURST: ${RATE_LIMIT_KEY_BURST:-20}
+      RATE_LIMIT_TENANT_QPS: ${RATE_LIMIT_TENANT_QPS:-}
+      RATE_LIMIT_TENANT_BURST: ${RATE_LIMIT_TENANT_BURST:-}
       OTEL_ENABLED: ${OTEL_ENABLED:-true}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME_GATEWAY:-gateway}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_CONSOLE_EXPORTER: ${OTEL_CONSOLE_EXPORTER:-false}
     depends_on:
+      redis:
+        condition: service_healthy
       router:
         condition: service_healthy
     healthcheck:

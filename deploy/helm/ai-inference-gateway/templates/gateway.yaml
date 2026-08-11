@@ -33,6 +33,24 @@ spec:
                 secretKeyRef:
                   name: {{ include "ai-inference-gateway.fullname" . }}-auth
                   key: DEMO_API_KEY
+            - name: REDIS_URL
+              value: {{ .Values.gateway.redisUrl | quote }}
+            - name: RATE_LIMIT_ENABLED
+              value: {{ .Values.gateway.rateLimitEnabled | quote }}
+            - name: RATE_LIMIT_BACKEND
+              value: {{ .Values.gateway.rateLimitBackend | quote }}
+            - name: RATE_LIMIT_KEY_QPS
+              value: {{ .Values.gateway.rateLimitKeyQps | quote }}
+            - name: RATE_LIMIT_KEY_BURST
+              value: {{ .Values.gateway.rateLimitKeyBurst | quote }}
+            {{- if .Values.gateway.rateLimitTenantQps }}
+            - name: RATE_LIMIT_TENANT_QPS
+              value: {{ .Values.gateway.rateLimitTenantQps | quote }}
+            {{- end }}
+            {{- if .Values.gateway.rateLimitTenantBurst }}
+            - name: RATE_LIMIT_TENANT_BURST
+              value: {{ .Values.gateway.rateLimitTenantBurst | quote }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /health

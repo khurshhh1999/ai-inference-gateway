@@ -1,7 +1,8 @@
 # AI Inference Gateway
 
 A multi-cloud **LLM inference gateway** that fronts **AWS Bedrock** and **GCP Vertex AI**
-behind one API — with **semantic caching**, **streaming**, and **per-tenant budgeting**.
+behind one API — with **semantic caching**, **streaming**, **per-tenant budgeting**,
+and **edge rate limiting**.
 
 Built to cut model spend and latency for multi-tenant AI products: target **~40% lower
 model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](load/RESULTS.md)).
@@ -14,12 +15,12 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 │              │     │  :8080          │     │  :8081           │
 └──────────────┘     └────────┬────────┘     └────────┬─────────┘
                               │                       │
-                              │              ┌────────┴────────┐
-                              │              │ Redis           │
-                              │              │ cache + budgets │
-                              │              └────────┬────────┘
-                              │                       │
-                     ┌────────┴────────┬──────────────┴────────┐
+                              │         ┌─────────────┴────────┐
+                              └────────▶│ Redis                │
+                                        │ cache + budgets + RL │
+                                        └──────────┬───────────┘
+                                                   │
+                     ┌─────────────────┬───────────┴───────────┐
                      │ AWS Bedrock     │ GCP Vertex AI │ Mock  │
                      └─────────────────┴───────────────┴───────┘
 ```
@@ -28,7 +29,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 |---------|------|----------------|
 | **gateway** | 8080 (host **18080**) | Public REST + SSE edge (TypeScript / Fastify) |
 | **router** | 8081 (host **18081**) | Routing, providers, semantic cache, budgets (FastAPI) |
-| **Redis** | 6379 (internal) | Cache vectors / keys + per-tenant usage counters |
+| **Redis** | 6379 (internal) | Cache vectors, budget counters, gateway rate-limit buckets |
 | **Prometheus** | 9090 (host **19090**) | Metrics scrape (compose profile `monitoring`) |
 | **Grafana** | 3000 (host **13000**) | Dashboards (compose profile `monitoring`) |
 | **Jaeger** | 16686 (host **16686**) | Trace UI (compose profile `monitoring`) |
@@ -43,6 +44,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | Semantic response cache (Redis) | Done |
 | SSE token streaming | Done |
 | Per-tenant API keys + USD/token budgets | Done |
+| Gateway per-key / per-tenant rate limiting | Done |
 | Prometheus metrics + Grafana + k6 p95 evidence | Done |
 | OpenTelemetry traces + `X-Request-Id` correlation | Done |
 | Multi-cloud deploy sketches (AWS + GCP + Helm) | Done |
@@ -167,6 +169,21 @@ chmod +x scripts/demo_budgets.sh
 ./scripts/demo_budgets.sh
 ```
 
+### Gateway rate limiting
+
+Token-bucket limits at the edge (`RATE_LIMIT_KEY_QPS` / `RATE_LIMIT_KEY_BURST`,
+optional `RATE_LIMIT_TENANT_*`). Over-limit keys get **429** with
+`X-RateLimit-*` and `Retry-After`. **Rate limit = concurrency/QPS; budget =
+spend** — they complement each other. Redis is the default backend (fail-open
+on brief Redis errors); use `RATE_LIMIT_BACKEND=memory` for local unit tests.
+
+```bash
+# Clear demo: restart with a tight burst, then:
+# RATE_LIMIT_KEY_QPS=2 RATE_LIMIT_KEY_BURST=3 docker compose up --build -d gateway
+chmod +x scripts/demo_rate_limit.sh
+./scripts/demo_rate_limit.sh
+```
+
 ### Semantic cache demo
 
 Near-duplicate prompts (same tenant + model family) return a cached completion
@@ -242,7 +259,13 @@ Copy `.env.example` → `.env`. Important variables:
 | `DEMO_API_KEY` | `demo-key-change-me` | Gateway API key (maps to tenant `default` if `TENANT_API_KEYS` unset) |
 | `TENANT_API_KEYS` | (empty) | `key:tenant,...` map for multi-tenant auth |
 | `MAX_BODY_BYTES` | `262144` | Gateway JSON body limit (413 when exceeded) |
-| `REDIS_URL` | `redis://redis:6379/0` | Cache / budget store |
+| `REDIS_URL` | `redis://redis:6379/0` | Cache / budget / rate-limit store |
+| `RATE_LIMIT_ENABLED` | `true` | Gateway token-bucket rate limiting |
+| `RATE_LIMIT_BACKEND` | `redis` | `redis` \| `memory` |
+| `RATE_LIMIT_KEY_QPS` | `10` | Per-API-key refill rate (0 = disable key scope) |
+| `RATE_LIMIT_KEY_BURST` | `20` | Per-API-key bucket capacity |
+| `RATE_LIMIT_TENANT_QPS` | (empty/0) | Optional per-tenant QPS across keys |
+| `RATE_LIMIT_TENANT_BURST` | (empty/0) | Optional per-tenant burst |
 | `CACHE_ENABLED` | `true` | Semantic response cache |
 | `CACHE_SIMILARITY_THRESHOLD` | `0.90` | Min similarity (embedding cosine or string ratio) |
 | `CACHE_TTL_SECONDS` | `3600` | Entry TTL |

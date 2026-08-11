@@ -47,3 +47,13 @@ groups:
         annotations:
           summary: Provider error rate spike
           description: Router is seeing elevated provider failures.
+
+      - alert: HighRateLimitRejections
+        expr: |
+          sum(rate(gateway_rate_limit_rejected_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated gateway rate-limit rejections
+          description: Clients are hitting per-key/per-tenant QPS limits at >1 reject/sec.

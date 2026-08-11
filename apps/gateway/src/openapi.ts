@@ -3,9 +3,9 @@ export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "AI Inference Gateway",
-    version: "0.6.0",
+    version: "0.9.0",
     description:
-      "OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, per-tenant budgets, and distributed tracing.",
+      "OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, per-tenant budgets, rate limiting, and distributed tracing.",
   },
   servers: [{ url: "http://localhost:18080" }],
   paths: {
@@ -92,13 +92,16 @@ export const openApiDocument = {
         responses: {
           "200": {
             description:
-              "JSON completion, or SSE (`text/event-stream`) when stream=true",
+              "JSON completion, or SSE (`text/event-stream`) when stream=true. May include X-RateLimit-* headers.",
           },
           "400": { description: "Invalid request body" },
           "401": { description: "Missing or invalid API key" },
           "402": { description: "Tenant hard budget exhausted" },
           "413": { description: "Request body too large" },
-          "429": { description: "Budget exhausted when BUDGET_HARD_STATUS=429" },
+          "429": {
+            description:
+              "Gateway rate limit exceeded (per key/tenant), or budget exhausted when BUDGET_HARD_STATUS=429",
+          },
           "502": { description: "Upstream router / provider error" },
         },
       },

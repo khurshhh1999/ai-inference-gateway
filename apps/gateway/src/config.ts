@@ -11,6 +11,14 @@ export type GatewayConfig = {
   otelServiceName: string;
   otelExporterOtlpEndpoint: string;
   otelConsoleExporter: boolean;
+  /** Edge rate limiting (token bucket). Rate limit = concurrency; budget = spend. */
+  rateLimitEnabled: boolean;
+  rateLimitBackend: "redis" | "memory";
+  redisUrl: string;
+  rateLimitKeyQps: number;
+  rateLimitKeyBurst: number;
+  rateLimitTenantQps: number;
+  rateLimitTenantBurst: number;
 };
 
 /** Parse `key:tenant,other:acme` (or JSON object) into a key→tenant map. */
@@ -40,6 +48,27 @@ export function parseTenantApiKeys(raw: string | undefined): Record<string, stri
   return out;
 }
 
+function parseBool(raw: string | undefined, defaultValue: boolean): boolean {
+  if (raw === undefined || raw.trim() === "") {
+    return defaultValue;
+  }
+  const v = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return defaultValue;
+}
+
+function parseNonNegNumber(raw: string | undefined, defaultValue: number): number {
+  if (raw === undefined || raw.trim() === "") {
+    return defaultValue;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    return defaultValue;
+  }
+  return n;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const mapped = parseTenantApiKeys(env.TENANT_API_KEYS);
   const demoKey = env.DEMO_API_KEY ?? "demo-key-change-me";
@@ -49,6 +78,33 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
 
   const otelEnabledRaw = (env.OTEL_ENABLED ?? "true").trim().toLowerCase();
   const otelConsoleRaw = (env.OTEL_CONSOLE_EXPORTER ?? "false").trim().toLowerCase();
+
+  const redisUrl = (
+    env.RATE_LIMIT_REDIS_URL?.trim() ||
+    env.REDIS_URL?.trim() ||
+    "redis://127.0.0.1:6379/0"
+  ).replace(/\/$/, "");
+
+  const backendRaw = (env.RATE_LIMIT_BACKEND ?? "").trim().toLowerCase();
+  const rateLimitBackend: "redis" | "memory" =
+    backendRaw === "memory"
+      ? "memory"
+      : backendRaw === "redis"
+        ? "redis"
+        : env.REDIS_URL || env.RATE_LIMIT_REDIS_URL
+          ? "redis"
+          : "memory";
+
+  const keyQps = parseNonNegNumber(env.RATE_LIMIT_KEY_QPS, 10);
+  const keyBurst = parseNonNegNumber(
+    env.RATE_LIMIT_KEY_BURST,
+    keyQps > 0 ? keyQps * 2 : 20,
+  );
+  const tenantQps = parseNonNegNumber(env.RATE_LIMIT_TENANT_QPS, 0);
+  const tenantBurst = parseNonNegNumber(
+    env.RATE_LIMIT_TENANT_BURST,
+    tenantQps > 0 ? tenantQps * 2 : 0,
+  );
 
   return {
     port: Number(env.PORT ?? "8080"),
@@ -60,5 +116,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     otelServiceName: (env.OTEL_SERVICE_NAME ?? "gateway").trim() || "gateway",
     otelExporterOtlpEndpoint: (env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "").trim().replace(/\/$/, ""),
     otelConsoleExporter: ["1", "true", "yes", "on"].includes(otelConsoleRaw),
+    rateLimitEnabled: parseBool(env.RATE_LIMIT_ENABLED, true),
+    rateLimitBackend,
+    redisUrl,
+    rateLimitKeyQps: keyQps,
+    rateLimitKeyBurst: keyBurst,
+    rateLimitTenantQps: tenantQps,
+    rateLimitTenantBurst: tenantBurst,
   };
 }

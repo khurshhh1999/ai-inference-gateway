@@ -52,6 +52,7 @@ runtime service account.
 | Secret | Used by |
 |--------|---------|
 | `DEMO_API_KEY` / `TENANT_API_KEYS` | gateway |
+| Redis reachable from gateway + router | rate limits + cache/budgets |
 
 ## IAM (least privilege)
 

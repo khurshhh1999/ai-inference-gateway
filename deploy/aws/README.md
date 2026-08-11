@@ -53,6 +53,9 @@ reference from the task definition (`secrets:` entries). Never bake into images.
 | `DEMO_API_KEY` or `TENANT_API_KEYS` | gateway |
 | Optional static AWS keys | **prefer task role instead** |
 
+Gateway and router both need network reachability to Redis (rate limits +
+cache/budgets).
+
 Prefer an **ECS task IAM role** for Bedrock (no long-lived access keys).
 
 ## IAM (least privilege)

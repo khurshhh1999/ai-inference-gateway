@@ -31,7 +31,8 @@ Internet → gateway (public) → router (private) → Redis (private)
 
 - Co-locate the **router** with the cloud model API you prefer for latency
   (`prefer_latency` / nearest region).
-- Keep **Redis** in the same VPC / VPC connector as the router (cache + budgets).
+- Keep **Redis** in the same VPC / VPC connector as the **router** (cache +
+  budgets) and reachable from the **gateway** (rate-limit buckets).
 - Expose only the **gateway** publicly; leave router and Redis internal.
 
 ## Build images
@@ -59,7 +60,8 @@ the task/service definitions in `aws/` and `gcp/`.
 |----------|-------|
 | `DEMO_API_KEY` / `TENANT_API_KEYS` | Gateway auth (from secret store) |
 | `ROUTER_URL` | Internal URL to router |
-| `REDIS_URL` | Internal Redis |
+| `REDIS_URL` | Internal Redis (router cache/budgets + gateway rate limits) |
+| `RATE_LIMIT_*` | Gateway QPS/burst (see root `.env.example`) |
 | `PROVIDER_MODE` | `mock` \| `bedrock` \| `vertex` \| `multi` |
 | `ROUTING_*` / `MODEL_MAP` | As in root `.env.example` |
 

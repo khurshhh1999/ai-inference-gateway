@@ -1,16 +1,10 @@
 import { buildServer } from "./app.js";
 import { loadConfig } from "./config.js";
-import { initTracing, shutdownTracing } from "./tracing.js";
+import { shutdownTracing } from "./tracing.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  initTracing({
-    enabled: config.otelEnabled,
-    serviceName: config.otelServiceName,
-    otlpEndpoint: config.otelExporterOtlpEndpoint,
-    consoleExporter: config.otelConsoleExporter,
-  });
-
+  // Tracing is initialized inside buildServer (safe to call once).
   const app = await buildServer(config);
   await app.listen({ port: config.port, host: "0.0.0.0" });
 

@@ -146,7 +146,7 @@
       "type": "timeseries",
       "title": "Gateway auth failures",
       "id": 9,
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 20 },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 20 },
       "targets": [
         {
           "expr": "sum(rate(gateway_auth_failures_total[5m]))",
@@ -157,9 +157,22 @@
     },
     {
       "type": "timeseries",
+      "title": "Rate limit rejections",
+      "id": 11,
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 20 },
+      "targets": [
+        {
+          "expr": "sum by (scope) (rate(gateway_rate_limit_rejected_total[5m]))",
+          "legendFormat": "{{scope}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
       "title": "Upstream errors",
       "id": 10,
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 20 },
       "targets": [
         {
           "expr": "sum by (kind) (rate(gateway_upstream_errors_total[5m]))",

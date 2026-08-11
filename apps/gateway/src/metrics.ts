@@ -35,6 +35,19 @@ export const bodyRejected = new client.Counter({
   registers: [register],
 });
 
+export const rateLimitRejected = new client.Counter({
+  name: "gateway_rate_limit_rejected_total",
+  help: "Requests rejected by gateway token-bucket rate limits",
+  labelNames: ["scope"] as const,
+  registers: [register],
+});
+
+export const rateLimitRedisErrors = new client.Counter({
+  name: "gateway_rate_limit_redis_errors_total",
+  help: "Redis errors while enforcing gateway rate limits (requests fail open)",
+  registers: [register],
+});
+
 export async function metricsPayload(): Promise<{
   body: string;
   contentType: string;

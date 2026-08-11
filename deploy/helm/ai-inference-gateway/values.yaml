@@ -32,6 +32,15 @@ auth:
   # Override via --set or a sealed secret in real clusters
   demoApiKey: demo-key-change-me
 
+gateway:
+  redisUrl: redis://redis:6379/0
+  rateLimitEnabled: "true"
+  rateLimitBackend: redis
+  rateLimitKeyQps: "10"
+  rateLimitKeyBurst: "20"
+  rateLimitTenantQps: ""
+  rateLimitTenantBurst: ""
+
 router:
   providerMode: mock
   routingPolicy: failover

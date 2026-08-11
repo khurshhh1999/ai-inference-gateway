@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: AI Inference Gateway
-  version: 0.6.0
-  description: OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, budgets, and tracing.
+  version: 0.9.0
+  description: OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, budgets, rate limiting, and tracing.
 servers:
   - url: http://localhost:18080
 paths:
@@ -51,6 +51,7 @@ paths:
             When `stream` is true, OpenAI-shaped SSE (`text/event-stream`) with
             `chat.completion.chunk` events ending in `data: [DONE]`.
             Soft budget warnings may include header `X-Budget-Warning: soft`.
+            Rate-limited responses include `X-RateLimit-*` and may include `Retry-After`.
             Every response includes `X-Request-Id` for log/trace correlation.
           content:
             application/json:
@@ -68,7 +69,9 @@ paths:
         "413":
           description: Request body exceeds MAX_BODY_BYTES
         "429":
-          description: Tenant hard budget exhausted when BUDGET_HARD_STATUS=429
+          description: |
+            Gateway per-key/per-tenant rate limit exceeded, or tenant hard budget
+            exhausted when BUDGET_HARD_STATUS=429.
         "502":
           description: Upstream router / provider error
 components:

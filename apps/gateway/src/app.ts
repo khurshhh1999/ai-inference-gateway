@@ -10,10 +10,18 @@ import {
   authFailures,
   bodyRejected,
   metricsPayload,
+  rateLimitRedisErrors,
+  rateLimitRejected,
   requestDuration,
   upstreamErrors,
 } from "./metrics.js";
 import { openApiDocument, swaggerUiHtml } from "./openapi.js";
+import {
+  createRateLimiter,
+  enforceRateLimits,
+  hashApiKey,
+  type RateLimiter,
+} from "./rateLimit.js";
 import { resolveRequestId } from "./requestId.js";
 import {
   endSpanError,
@@ -36,6 +44,7 @@ type ChatBody = {
 type RequestExtras = FastifyRequest & {
   _startedAt?: number;
   tenantId?: string;
+  apiKeyHash?: string;
   requestId?: string;
 };
 
@@ -53,7 +62,15 @@ function routeLabel(url: string): string {
   return "other";
 }
 
-export async function buildServer(config: GatewayConfig): Promise<FastifyInstance> {
+export type BuildServerOptions = {
+  /** Override rate limiter (tests). */
+  rateLimiter?: RateLimiter;
+};
+
+export async function buildServer(
+  config: GatewayConfig,
+  options: BuildServerOptions = {},
+): Promise<FastifyInstance> {
   initTracing({
     enabled: config.otelEnabled,
     serviceName: config.otelServiceName,
@@ -67,6 +84,29 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
     requestTimeout: 120_000,
   });
   const tracer = getTracer("gateway");
+
+  const rateLimiter =
+    options.rateLimiter ??
+    createRateLimiter(
+      {
+        enabled: config.rateLimitEnabled,
+        backend: config.rateLimitBackend,
+        redisUrl: config.redisUrl,
+        keyQps: config.rateLimitKeyQps,
+        keyBurst: config.rateLimitKeyBurst,
+        tenantQps: config.rateLimitTenantQps,
+        tenantBurst: config.rateLimitTenantBurst,
+      },
+      {
+        onRedisError: () => {
+          rateLimitRedisErrors.inc();
+        },
+      },
+    );
+
+  app.addHook("onClose", async () => {
+    await rateLimiter.close();
+  });
 
   app.setErrorHandler((err, request, reply) => {
     const statusCode =
@@ -129,6 +169,42 @@ export async function buildServer(config: GatewayConfig): Promise<FastifyInstanc
       });
     }
     extras.tenantId = tenant;
+    extras.apiKeyHash = hashApiKey(key);
+
+    const decision = await enforceRateLimits(
+      rateLimiter,
+      {
+        enabled: config.rateLimitEnabled,
+        backend: config.rateLimitBackend,
+        redisUrl: config.redisUrl,
+        keyQps: config.rateLimitKeyQps,
+        keyBurst: config.rateLimitKeyBurst,
+        tenantQps: config.rateLimitTenantQps,
+        tenantBurst: config.rateLimitTenantBurst,
+      },
+      extras.apiKeyHash,
+      tenant,
+    );
+
+    if (decision) {
+      void reply.header("x-ratelimit-limit", String(decision.limit));
+      void reply.header("x-ratelimit-remaining", String(Math.max(0, decision.remaining)));
+      void reply.header("x-ratelimit-scope", decision.scope);
+      if (!decision.allowed) {
+        rateLimitRejected.inc({ scope: decision.scope });
+        const retryAfterSec = Math.max(1, Math.ceil(decision.retryAfterMs / 1000));
+        void reply.header("retry-after", String(retryAfterSec));
+        return reply.code(429).send({
+          error: {
+            message: `Rate limit exceeded (${decision.scope})`,
+            type: "rate_limit_error",
+            scope: decision.scope,
+            limit: decision.limit,
+            retry_after_ms: decision.retryAfterMs,
+          },
+        });
+      }
+    }
   });
 
   app.addHook("onResponse", async (request, reply) => {

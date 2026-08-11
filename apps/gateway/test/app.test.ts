@@ -3,6 +3,8 @@ import { after, before, describe, it } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { buildServer } from "../src/app.js";
 import { loadConfig, parseTenantApiKeys } from "../src/config.js";
+import { MemoryRateLimiter } from "../src/rateLimit.js";
+import { resetMetricsForTests } from "../src/metrics.js";
 
 describe("gateway", () => {
   let app: FastifyInstance;
@@ -15,6 +17,8 @@ describe("gateway", () => {
         ROUTER_URL: "http://router.test",
         DEMO_API_KEY: "demo-key-change-me",
         LOG_LEVEL: "silent",
+        // Keep shared suite independent of Redis / rate limits.
+        RATE_LIMIT_ENABLED: "false",
       }),
     );
     await app.ready();
@@ -60,6 +64,7 @@ describe("gateway", () => {
         DEMO_API_KEY: "demo-key-change-me",
         LOG_LEVEL: "silent",
         MAX_BODY_BYTES: "200",
+        RATE_LIMIT_ENABLED: "false",
       }),
     );
     await limited.ready();
@@ -148,6 +153,7 @@ describe("gateway", () => {
         ROUTER_URL: "http://router.test",
         TENANT_API_KEYS: "acme-key:acme,demo-key-change-me:default",
         LOG_LEVEL: "silent",
+        RATE_LIMIT_ENABLED: "false",
       }),
     );
     await keyed.ready();
@@ -344,5 +350,185 @@ describe("parseTenantApiKeys", () => {
     });
     assert.deepEqual(parseTenantApiKeys('{"k":"t"}'), { k: "t" });
     assert.deepEqual(parseTenantApiKeys(""), {});
+  });
+});
+
+describe("gateway rate limiting", () => {
+  const originalFetch = globalThis.fetch;
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function mockOkFetch(): void {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          id: "chatcmpl-rl",
+          object: "chat.completion",
+          created: 1,
+          model: "mock-small",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          provider: "mock",
+          cached: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as typeof fetch;
+  }
+
+  it("returns 429 when over the per-key burst", async () => {
+    resetMetricsForTests();
+    mockOkFetch();
+    const limiter = new MemoryRateLimiter();
+    const app = await buildServer(
+      loadConfig({
+        PORT: "0",
+        ROUTER_URL: "http://router.test",
+        DEMO_API_KEY: "demo-key-change-me",
+        LOG_LEVEL: "silent",
+        RATE_LIMIT_ENABLED: "true",
+        RATE_LIMIT_BACKEND: "memory",
+        RATE_LIMIT_KEY_QPS: "1",
+        RATE_LIMIT_KEY_BURST: "2",
+        RATE_LIMIT_TENANT_QPS: "0",
+      }),
+      { rateLimiter: limiter },
+    );
+    await app.ready();
+    try {
+      const payload = {
+        model: "mock-small",
+        messages: [{ role: "user", content: "hi" }],
+      };
+      const headers = { "x-api-key": "demo-key-change-me" };
+      const first = await app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        headers,
+        payload,
+      });
+      const second = await app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        headers,
+        payload,
+      });
+      const third = await app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        headers,
+        payload,
+      });
+
+      assert.equal(first.statusCode, 200);
+      assert.equal(second.statusCode, 200);
+      assert.equal(third.statusCode, 429);
+      assert.equal(third.json().error.type, "rate_limit_error");
+      assert.equal(third.json().error.scope, "key");
+      assert.equal(third.headers["x-ratelimit-scope"], "key");
+      assert.ok(Number(third.headers["retry-after"]) >= 1);
+
+      const metrics = await app.inject({ method: "GET", url: "/metrics" });
+      assert.match(metrics.body, /gateway_rate_limit_rejected_total/);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("leaves under-limit traffic unchanged when disabled", async () => {
+    mockOkFetch();
+    const app = await buildServer(
+      loadConfig({
+        PORT: "0",
+        ROUTER_URL: "http://router.test",
+        DEMO_API_KEY: "demo-key-change-me",
+        LOG_LEVEL: "silent",
+        RATE_LIMIT_ENABLED: "false",
+        RATE_LIMIT_KEY_QPS: "1",
+        RATE_LIMIT_KEY_BURST: "1",
+      }),
+    );
+    await app.ready();
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        const res = await app.inject({
+          method: "POST",
+          url: "/v1/chat/completions",
+          headers: { "x-api-key": "demo-key-change-me" },
+          payload: {
+            model: "mock-small",
+            messages: [{ role: "user", content: `hi ${i}` }],
+          },
+        });
+        assert.equal(res.statusCode, 200);
+        assert.equal(res.headers["x-ratelimit-limit"], undefined);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("enforces per-tenant limits across keys", async () => {
+    mockOkFetch();
+    const limiter = new MemoryRateLimiter();
+    const app = await buildServer(
+      loadConfig({
+        PORT: "0",
+        ROUTER_URL: "http://router.test",
+        TENANT_API_KEYS: "key-a:acme,key-b:acme",
+        LOG_LEVEL: "silent",
+        RATE_LIMIT_ENABLED: "true",
+        RATE_LIMIT_BACKEND: "memory",
+        RATE_LIMIT_KEY_QPS: "0",
+        RATE_LIMIT_TENANT_QPS: "1",
+        RATE_LIMIT_TENANT_BURST: "1",
+      }),
+      { rateLimiter: limiter },
+    );
+    await app.ready();
+    try {
+      const payload = {
+        model: "mock-small",
+        messages: [{ role: "user", content: "hi" }],
+      };
+      const a = await app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        headers: { "x-api-key": "key-a" },
+        payload,
+      });
+      const b = await app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        headers: { "x-api-key": "key-b" },
+        payload,
+      });
+      assert.equal(a.statusCode, 200);
+      assert.equal(b.statusCode, 429);
+      assert.equal(b.json().error.scope, "tenant");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("MemoryRateLimiter", () => {
+  it("refills tokens over time", async () => {
+    const limiter = new MemoryRateLimiter();
+    const first = await limiter.take("key", "k1", 100, 1);
+    assert.equal(first.allowed, true);
+    const second = await limiter.take("key", "k1", 100, 1);
+    assert.equal(second.allowed, false);
+    await new Promise((r) => setTimeout(r, 25));
+    const third = await limiter.take("key", "k1", 100, 1);
+    assert.equal(third.allowed, true);
+    await limiter.close();
   });
 });
