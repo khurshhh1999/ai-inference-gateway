@@ -124,10 +124,16 @@ class Settings(BaseSettings):
     circuit_breaker_failure_threshold: int = 3
     circuit_breaker_reset_ms: int = 30_000
 
-    # Cost / latency hints used by prefer_cost / prefer_latency (and estimate_cost)
+    # Cost / latency hints used by prefer_cost / prefer_latency / adaptive cold start
     provider_cost_per_1k_input: str = "mock:0.0,bedrock:0.00025,vertex:0.000075"
     provider_cost_per_1k_output: str = "mock:0.0,bedrock:0.00125,vertex:0.0003"
     provider_latency_ms: str = "mock:40,bedrock:200,vertex:150"
+
+    # Adaptive routing (live EWMA). Static hints above are the cold-start prior.
+    adaptive_ewma_alpha: float = 0.3
+    adaptive_error_penalty_ms: float = 1_000.0
+    adaptive_min_samples: int = 1
+    adaptive_stale_after_seconds: float = 30.0
 
     # Logical model → provider-specific model ids
     model_map: str = (

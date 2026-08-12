@@ -2,5 +2,6 @@
 
 from app.routing.engine import RouteDecision, RoutingEngine
 from app.routing.policies import ordered_candidates
+from app.routing.signals import AdaptiveSignals
 
-__all__ = ["RouteDecision", "RoutingEngine", "ordered_candidates"]
+__all__ = ["AdaptiveSignals", "RouteDecision", "RoutingEngine", "ordered_candidates"]

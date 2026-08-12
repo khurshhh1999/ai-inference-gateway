@@ -43,6 +43,7 @@ gateway:
 
 router:
   providerMode: mock
+  # failover | prefer_cost | prefer_latency | prefer_provider | adaptive
   routingPolicy: failover
   routingPrimary: bedrock
   routingFallback: "vertex,mock"

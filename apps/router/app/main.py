@@ -36,7 +36,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="AI Inference Router",
-    version="0.8.0",
+    version="0.10.0",
     description="Routing engine for the AI Inference Gateway",
     lifespan=lifespan,
 )
@@ -118,6 +118,12 @@ async def health() -> JSONResponse:
                 "enabled": settings.otel_enabled,
                 "service_name": settings.otel_service_name,
                 "otlp_configured": bool(settings.otel_exporter_otlp_endpoint.strip()),
+            },
+            "adaptive": {
+                "ewma_alpha": settings.adaptive_ewma_alpha,
+                "error_penalty_ms": settings.adaptive_error_penalty_ms,
+                "stale_after_seconds": settings.adaptive_stale_after_seconds,
+                "providers": engine.signals_snapshot(),
             },
         }
     )

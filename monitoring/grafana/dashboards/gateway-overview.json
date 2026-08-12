@@ -180,6 +180,38 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Adaptive EWMA latency",
+      "id": 12,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "targets": [
+        {
+          "expr": "router_adaptive_latency_ewma_seconds",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Adaptive error rate + score",
+      "id": 13,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "targets": [
+        {
+          "expr": "router_adaptive_error_rate",
+          "legendFormat": "{{provider}} errors",
+          "refId": "A"
+        },
+        {
+          "expr": "router_adaptive_score_seconds",
+          "legendFormat": "{{provider}} score",
+          "refId": "B"
+        }
+      ]
     }
   ],
   "refresh": "10s",

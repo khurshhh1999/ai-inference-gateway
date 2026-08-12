@@ -1,8 +1,8 @@
 # Deploy sketches
 
-Portfolio-oriented deploy paths for running the gateway near AWS Bedrock,
-near GCP Vertex AI, or both. These are **sketches** (documented manifests +
-IAM notes), not a turnkey production platform.
+Deploy paths for running the gateway near AWS Bedrock, near GCP Vertex AI,
+or both. These are **sketches** (documented manifests + IAM notes), not a
+turnkey production platform.
 
 | Path | Cloud | Primary runtime | Provider |
 |------|-------|-----------------|----------|
@@ -30,7 +30,7 @@ Internet → gateway (public) → router (private) → Redis (private)
 ```
 
 - Co-locate the **router** with the cloud model API you prefer for latency
-  (`prefer_latency` / nearest region).
+  (`prefer_latency`, or `adaptive` once live EWMA has samples).
 - Keep **Redis** in the same VPC / VPC connector as the **router** (cache +
   budgets) and reachable from the **gateway** (rate-limit buckets).
 - Expose only the **gateway** publicly; leave router and Redis internal.

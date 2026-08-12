@@ -2,7 +2,7 @@
 
 A multi-cloud **LLM inference gateway** that fronts **AWS Bedrock** and **GCP Vertex AI**
 behind one API — with **semantic caching**, **streaming**, **per-tenant budgeting**,
-and **edge rate limiting**.
+**edge rate limiting**, and **adaptive routing**.
 
 Built to cut model spend and latency for multi-tenant AI products: target **~40% lower
 model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](load/RESULTS.md)).
@@ -45,6 +45,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | SSE token streaming | Done |
 | Per-tenant API keys + USD/token budgets | Done |
 | Gateway per-key / per-tenant rate limiting | Done |
+| Adaptive routing (live EWMA latency / errors) | Done |
 | Prometheus metrics + Grafana + k6 p95 evidence | Done |
 | OpenTelemetry traces + `X-Request-Id` correlation | Done |
 | Multi-cloud deploy sketches (AWS + GCP + Helm) | Done |
@@ -125,6 +126,7 @@ curl -s http://localhost:18081/metrics | head
 curl -s http://localhost:18080/openapi.json | jq .info
 # Swagger UI: http://localhost:18080/docs
 curl -s http://localhost:18081/v1/cache/stats
+curl -s http://localhost:18081/v1/routing/stats
 curl -s http://localhost:18081/v1/tenants/default/usage
 curl -s http://localhost:18081/v1/tenants/default/budget
 ```
@@ -151,9 +153,10 @@ chmod +x scripts/demo_tracing.sh
 
 Stable Prometheus names use `gateway_*` / `router_*` prefixes with explicit
 histogram buckets for p95. Grafana dashboard **AI Inference Gateway Overview**
-is provisioned under the `monitoring` profile; alerts cover error rate, miss
-p95, budget burn, and provider errors (`monitoring/alerts.yml`). Jaeger is
-included in the same profile for distributed traces.
+is provisioned under the `monitoring` profile (including adaptive EWMA latency
+and score); alerts cover error rate, miss p95, budget burn, and provider
+errors (`monitoring/alerts.yml`). Jaeger is included in the same profile for
+distributed traces.
 
 ### Per-tenant budgets
 
@@ -183,6 +186,27 @@ on brief Redis errors); use `RATE_LIMIT_BACKEND=memory` for local unit tests.
 chmod +x scripts/demo_rate_limit.sh
 ./scripts/demo_rate_limit.sh
 ```
+
+### Adaptive routing
+
+`ROUTING_POLICY=adaptive` ranks providers from live EWMA latency and error
+rate. Static `PROVIDER_LATENCY_MS` hints are the cold-start prior; after a
+few calls the router prefers the healthier endpoint without changing
+`ROUTING_PRIMARY` / `ROUTING_FALLBACK`. `route_reason` is `adaptive`.
+Providers idle longer than `ADAPTIVE_STALE_AFTER_SECONDS` are probed again
+so a recovered endpoint can earn traffic back.
+
+```bash
+# Traffic shift is obvious in multi mode (cloud adapters fail without creds):
+# PROVIDER_MODE=multi ROUTING_POLICY=adaptive CACHE_ENABLED=false docker compose up --build
+
+chmod +x scripts/demo_adaptive_routing.sh
+./scripts/demo_adaptive_routing.sh
+```
+
+Live snapshot: `GET http://localhost:18081/v1/routing/stats`. Grafana
+(monitoring profile) has **Adaptive EWMA latency** and **Adaptive error
+rate + score**.
 
 ### Semantic cache demo
 
@@ -251,10 +275,13 @@ Copy `.env.example` → `.env`. Important variables:
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `PROVIDER_MODE` | `mock` | `mock` \| `bedrock` \| `vertex` \| `multi` |
-| `ROUTING_POLICY` | `failover` | `prefer_cost` \| `prefer_latency` \| `prefer_provider` \| `failover` |
+| `ROUTING_POLICY` | `failover` | `prefer_cost` \| `prefer_latency` \| `prefer_provider` \| `failover` \| `adaptive` |
 | `ROUTING_PRIMARY` | `bedrock` | First provider for affinity / failover |
 | `ROUTING_FALLBACK` | `vertex,mock` | Ordered failover chain after primary |
 | `PROVIDER_TIMEOUT_MS` | `5000` | Per-provider call timeout |
+| `ADAPTIVE_EWMA_ALPHA` | `0.3` | Smoothing for live latency / error EWMA (`adaptive` policy) |
+| `ADAPTIVE_ERROR_PENALTY_MS` | `1000` | Added to score as `penalty * error_rate` (ms) |
+| `ADAPTIVE_STALE_AFTER_SECONDS` | `30` | Idle providers fall back to hints and are probed again |
 | `MODEL_MAP` | (see `.env.example`) | Logical model → provider-specific ids |
 | `DEMO_API_KEY` | `demo-key-change-me` | Gateway API key (maps to tenant `default` if `TENANT_API_KEYS` unset) |
 | `TENANT_API_KEYS` | (empty) | `key:tenant,...` map for multi-tenant auth |

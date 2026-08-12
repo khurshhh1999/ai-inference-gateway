@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 # Explicit buckets so p95 claims are reproducible from /metrics.
 _LATENCY_BUCKETS = (
@@ -74,6 +74,30 @@ ROUTE_DECISIONS = Counter(
     labelnames=("provider", "reason"),
 )
 
+ADAPTIVE_LATENCY_EWMA = Gauge(
+    "router_adaptive_latency_ewma_seconds",
+    "Live EWMA provider latency from recent attempts",
+    labelnames=("provider",),
+)
+
+ADAPTIVE_ERROR_RATE = Gauge(
+    "router_adaptive_error_rate",
+    "Live EWMA provider error rate (0-1)",
+    labelnames=("provider",),
+)
+
+ADAPTIVE_SCORE = Gauge(
+    "router_adaptive_score_seconds",
+    "Adaptive routing score (lower is preferred): EWMA latency + error penalty",
+    labelnames=("provider",),
+)
+
+ADAPTIVE_SAMPLES = Gauge(
+    "router_adaptive_samples",
+    "Live observations contributing to adaptive EWMA (0 when cold/stale)",
+    labelnames=("provider",),
+)
+
 
 def observe_request(
     *,
@@ -129,6 +153,20 @@ def record_budget_rejection(window: str, metric: str) -> None:
 
 def record_route_decision(provider: str, reason: str) -> None:
     ROUTE_DECISIONS.labels(provider=provider, reason=reason[:64]).inc()
+
+
+def set_adaptive_gauges(
+    provider: str,
+    *,
+    latency_ms: float,
+    error_rate: float,
+    score_ms: float,
+    samples: int,
+) -> None:
+    ADAPTIVE_LATENCY_EWMA.labels(provider=provider).set(max(0.0, latency_ms) / 1000.0)
+    ADAPTIVE_ERROR_RATE.labels(provider=provider).set(min(1.0, max(0.0, error_rate)))
+    ADAPTIVE_SCORE.labels(provider=provider).set(max(0.0, score_ms) / 1000.0)
+    ADAPTIVE_SAMPLES.labels(provider=provider).set(max(0, samples))
 
 
 def render_latest() -> tuple[bytes, str]:

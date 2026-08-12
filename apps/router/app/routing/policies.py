@@ -3,8 +3,11 @@ from __future__ import annotations
 from app.config import Settings
 from app.models import ChatCompletionRequest
 from app.providers.base import Provider
+from app.routing.signals import AdaptiveSignals
 
-VALID_POLICIES = frozenset({"prefer_cost", "prefer_latency", "prefer_provider", "failover"})
+VALID_POLICIES = frozenset(
+    {"prefer_cost", "prefer_latency", "prefer_provider", "failover", "adaptive"}
+)
 
 
 def _rough_cost_usd(
@@ -26,6 +29,7 @@ def ordered_candidates(
     settings: Settings,
     *,
     policy: str | None = None,
+    signals: AdaptiveSignals | None = None,
 ) -> tuple[list[Provider], str]:
     """Return providers in try-order plus a human-readable reason code."""
     policy_name = (policy or settings.routing_policy).lower().strip()
@@ -49,6 +53,21 @@ def ordered_candidates(
             key=lambda p: settings.latency_hints_ms.get(p.name, 1_000.0),
         )
         return ranked, "latency"
+
+    if policy_name == "adaptive":
+        tracker = signals or AdaptiveSignals(
+            alpha=settings.adaptive_ewma_alpha,
+            error_penalty_ms=settings.adaptive_error_penalty_ms,
+            min_samples=settings.adaptive_min_samples,
+            stale_after_seconds=settings.adaptive_stale_after_seconds,
+            latency_hints_ms=settings.latency_hints_ms,
+        )
+        # Stale providers are probed first so a recovered endpoint can earn traffic
+        # again without a config change; everyone else ranks on live score.
+        stale = [p for p in available if tracker.is_stale(p.name)]
+        rest = [p for p in available if not tracker.is_stale(p.name)]
+        ranked = stale + sorted(rest, key=lambda p: tracker.score(p.name))
+        return ranked, "adaptive"
 
     # prefer_provider + failover: primary first, then configured fallbacks, then rest
     ordered_names: list[str] = []

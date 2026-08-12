@@ -5,15 +5,19 @@ owns semantic caching, and enforces per-tenant USD/token budgets.
 
 ## Routing
 
-- **Policies:** `ROUTING_POLICY` = `prefer_cost` | `prefer_latency` | `prefer_provider` | `failover`
+- **Policies:** `ROUTING_POLICY` = `prefer_cost` | `prefer_latency` | `prefer_provider` |
+  `failover` | `adaptive`
 - **Failover:** primary (`ROUTING_PRIMARY`) then `ROUTING_FALLBACK` chain, with per-call
   timeout (`PROVIDER_TIMEOUT_MS`) and a circuit breaker
+- **Adaptive:** live EWMA latency + error rate per provider; static `PROVIDER_LATENCY_MS`
+  hints are the cold start. Idle providers (`ADAPTIVE_STALE_AFTER_SECONDS`) are probed
+  again. Snapshot: `GET /v1/routing/stats`
 - **Model map:** `MODEL_MAP` maps logical names like `gpt-proxy` to Bedrock Claude /
   Vertex Gemini ids
 - **Modes:** `PROVIDER_MODE=mock|bedrock|vertex|multi` (default `mock` needs no cloud keys)
 
-Responses include `provider` and `route_reason` (`cost` / `latency` / `affinity` / `failover`).
-Route decisions are also logged.
+Responses include `provider` and `route_reason` (`cost` / `latency` / `affinity` /
+`failover` / `adaptive`). Route decisions are also logged.
 
 ## Budgets
 

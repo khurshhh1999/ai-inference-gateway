@@ -449,6 +449,21 @@ async def cache_stats() -> dict:
     }
 
 
+@router.get("/v1/routing/stats")
+async def routing_stats() -> dict:
+    """Live EWMA latency / error signals used by adaptive routing."""
+    engine = get_routing_engine()
+    return {
+        "policy": settings.routing_policy,
+        "ewma_alpha": settings.adaptive_ewma_alpha,
+        "error_penalty_ms": settings.adaptive_error_penalty_ms,
+        "min_samples": settings.adaptive_min_samples,
+        "stale_after_seconds": settings.adaptive_stale_after_seconds,
+        "latency_hints_ms": settings.latency_hints_ms,
+        "providers": engine.signals_snapshot(),
+    }
+
+
 @router.get("/v1/tenants/{tenant_id}/usage")
 async def tenant_usage(tenant_id: str) -> dict:
     """Usage summary + remaining budget for minute/day/month windows."""

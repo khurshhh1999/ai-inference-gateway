@@ -23,6 +23,7 @@ def test_health(client: TestClient) -> None:
     assert body["service"] == "router"
     assert body["providers"]["mock"] is True
     assert "routing_policy" in body
+    assert "adaptive" in body
 
 
 def test_chat_completions_mock(client: TestClient) -> None:
@@ -40,7 +41,7 @@ def test_chat_completions_mock(client: TestClient) -> None:
     assert body["object"] == "chat.completion"
     assert body["provider"] == "mock"
     assert body["cached"] is False
-    assert body["route_reason"] in {"failover", "cost", "latency", "affinity"}
+    assert body["route_reason"] in {"failover", "cost", "latency", "affinity", "adaptive"}
     assert "hello gateway" in body["choices"][0]["message"]["content"]
     assert body["usage"]["total_tokens"] >= 2
 

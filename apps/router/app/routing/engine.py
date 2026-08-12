@@ -13,11 +13,17 @@ from app.errors import (
     ProviderError,
     ProviderTimeoutError,
 )
-from app.metrics import observe_provider, record_provider_error, record_route_decision
+from app.metrics import (
+    observe_provider,
+    record_provider_error,
+    record_route_decision,
+    set_adaptive_gauges,
+)
 from app.models import ChatCompletionRequest, ChatCompletionResponse
 from app.providers.base import Provider
 from app.providers.circuit_breaker import CircuitBreaker
 from app.routing.policies import ordered_candidates
+from app.routing.signals import AdaptiveSignals
 from app.streaming import new_completion_id
 from app.tracing import get_tracer, set_span_error, set_span_ok
 
@@ -70,13 +76,42 @@ class RoutingEngine:
             )
             for name in providers
         }
+        self._signals = AdaptiveSignals(
+            alpha=self._settings.adaptive_ewma_alpha,
+            error_penalty_ms=self._settings.adaptive_error_penalty_ms,
+            min_samples=self._settings.adaptive_min_samples,
+            stale_after_seconds=self._settings.adaptive_stale_after_seconds,
+            latency_hints_ms=self._settings.latency_hints_ms,
+        )
 
     @property
     def providers(self) -> dict[str, Provider]:
         return self._providers
 
+    @property
+    def signals(self) -> AdaptiveSignals:
+        return self._signals
+
+    def signals_snapshot(self) -> dict[str, dict[str, float | int | bool]]:
+        return self._signals.as_dict(list(self._providers))
+
+    def _observe_provider(self, name: str, started: float, outcome: str) -> None:
+        elapsed = time.perf_counter() - started
+        observe_provider(provider=name, outcome=outcome, seconds=elapsed)
+        self._signals.observe(name, elapsed * 1000.0, error=(outcome != "ok"))
+        snap = self._signals.snapshot([name])[name]
+        set_adaptive_gauges(
+            name,
+            latency_ms=snap.ewma_latency_ms,
+            error_rate=snap.ewma_error_rate,
+            score_ms=snap.score,
+            samples=snap.samples,
+        )
+
     async def complete(self, request: ChatCompletionRequest) -> RouteDecision:
-        candidates, reason = ordered_candidates(request, self._providers, self._settings)
+        candidates, reason = ordered_candidates(
+            request, self._providers, self._settings, signals=self._signals
+        )
         attempts: list[dict[str, str]] = []
 
         if not candidates:
@@ -120,11 +155,7 @@ class RoutingEngine:
                     )
                     attempts.append({"provider": provider.name, "error": str(err)})
                     record_provider_error(provider.name, "timeout")
-                    observe_provider(
-                        provider=provider.name,
-                        outcome="error",
-                        seconds=time.perf_counter() - started,
-                    )
+                    self._observe_provider(provider.name, started, "error")
                     set_span_error(span, err)
                     logger.warning(
                         "route fail provider=%s error=timeout timeout_ms=%s",
@@ -138,11 +169,7 @@ class RoutingEngine:
                     breaker.record_failure()
                     attempts.append({"provider": provider.name, "error": str(exc)})
                     record_provider_error(provider.name, type(exc).__name__)
-                    observe_provider(
-                        provider=provider.name,
-                        outcome="error",
-                        seconds=time.perf_counter() - started,
-                    )
+                    self._observe_provider(provider.name, started, "error")
                     set_span_error(span, exc)
                     logger.warning(
                         "route fail provider=%s error=%s retryable=%s",
@@ -158,21 +185,13 @@ class RoutingEngine:
                     breaker.record_failure()
                     attempts.append({"provider": provider.name, "error": str(exc)})
                     record_provider_error(provider.name, type(exc).__name__)
-                    observe_provider(
-                        provider=provider.name,
-                        outcome="error",
-                        seconds=time.perf_counter() - started,
-                    )
+                    self._observe_provider(provider.name, started, "error")
                     set_span_error(span, exc)
                     logger.exception("route fail provider=%s unexpected error", provider.name)
                     continue
 
                 breaker.record_success()
-                observe_provider(
-                    provider=provider.name,
-                    outcome="ok",
-                    seconds=time.perf_counter() - started,
-                )
+                self._observe_provider(provider.name, started, "ok")
                 response.provider = provider.name
                 response.route_reason = reason
                 record_route_decision(provider.name, reason)
@@ -195,7 +214,9 @@ class RoutingEngine:
 
     async def open_stream(self, request: ChatCompletionRequest) -> StreamRoute:
         """Pick a provider and open its text-delta stream (failover before first byte)."""
-        candidates, reason = ordered_candidates(request, self._providers, self._settings)
+        candidates, reason = ordered_candidates(
+            request, self._providers, self._settings, signals=self._signals
+        )
         attempts: list[dict[str, str]] = []
 
         if not candidates:
@@ -238,11 +259,7 @@ class RoutingEngine:
                         {"provider": provider.name, "error": "empty_stream"},
                     )
                     record_provider_error(provider.name, "empty_stream")
-                    observe_provider(
-                        provider=provider.name,
-                        outcome="error",
-                        seconds=time.perf_counter() - started,
-                    )
+                    self._observe_provider(provider.name, started, "error")
                     set_span_error(span, "empty_stream")
                     logger.warning("route fail provider=%s error=empty_stream", provider.name)
                     continue
@@ -254,11 +271,7 @@ class RoutingEngine:
                     )
                     attempts.append({"provider": provider.name, "error": str(err)})
                     record_provider_error(provider.name, "timeout")
-                    observe_provider(
-                        provider=provider.name,
-                        outcome="error",
-                        seconds=time.perf_counter() - started,
-                    )
+                    self._observe_provider(provider.name, started, "error")
                     set_span_error(span, err)
                     logger.warning(
                         "route fail provider=%s error=timeout timeout_ms=%s stream=1",
@@ -271,11 +284,7 @@ class RoutingEngine:
                     breaker.record_failure()
                     attempts.append({"provider": provider.name, "error": str(exc)})
                     record_provider_error(provider.name, "not_implemented")
-                    observe_provider(
-                        provider=provider.name,
-                        outcome="error",
-                        seconds=time.perf_counter() - started,
-                    )
+                    self._observe_provider(provider.name, started, "error")
                     set_span_error(span, exc)
                     logger.warning(
                         "route fail provider=%s error=%s stream=1", provider.name, exc
@@ -286,11 +295,7 @@ class RoutingEngine:
                     breaker.record_failure()
                     attempts.append({"provider": provider.name, "error": str(exc)})
                     record_provider_error(provider.name, type(exc).__name__)
-                    observe_provider(
-                        provider=provider.name,
-                        outcome="error",
-                        seconds=time.perf_counter() - started,
-                    )
+                    self._observe_provider(provider.name, started, "error")
                     set_span_error(span, exc)
                     logger.warning(
                         "route fail provider=%s error=%s retryable=%s stream=1",
@@ -304,11 +309,7 @@ class RoutingEngine:
                     breaker.record_failure()
                     attempts.append({"provider": provider.name, "error": str(exc)})
                     record_provider_error(provider.name, type(exc).__name__)
-                    observe_provider(
-                        provider=provider.name,
-                        outcome="error",
-                        seconds=time.perf_counter() - started,
-                    )
+                    self._observe_provider(provider.name, started, "error")
                     set_span_error(span, exc)
                     logger.exception(
                         "route fail provider=%s unexpected error stream=1", provider.name
@@ -316,11 +317,7 @@ class RoutingEngine:
                     continue
 
                 breaker.record_success()
-                observe_provider(
-                    provider=provider.name,
-                    outcome="ok",
-                    seconds=time.perf_counter() - started,
-                )
+                self._observe_provider(provider.name, started, "ok")
                 record_route_decision(provider.name, reason)
                 set_span_ok(span)
                 logger.info(

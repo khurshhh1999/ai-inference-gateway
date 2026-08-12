@@ -10,6 +10,8 @@ def test_metrics_endpoint_exposes_router_series(client: TestClient) -> None:
     assert "router_request_duration_seconds" in body
     assert "router_cache_hit_total" in body
     assert "router_provider_errors_total" in body
+    assert "router_adaptive_latency_ewma_seconds" in body
+    assert "router_adaptive_error_rate" in body
 
 
 def test_chat_updates_request_histogram(client: TestClient) -> None:
