@@ -72,6 +72,8 @@ jobs:
       - name: Chat completion + metrics
         run: |
           set -euo pipefail
+          # Avoid `curl | grep -q` under pipefail: grep exits early on match and
+          # curl gets SIGPIPE (exit 23), failing the step even when grep matched.
           curl -sD /tmp/headers.txt -o /tmp/completion.json \
             http://127.0.0.1:18080/v1/chat/completions \
             -H 'Content-Type: application/json' \
@@ -80,22 +82,29 @@ jobs:
             -d '{"model":"mock-small","messages":[{"role":"user","content":"ci smoke"}]}'
           grep -q '"provider"' /tmp/completion.json
           grep -qi 'x-request-id: ci-smoke-req-001' /tmp/headers.txt
-          curl -sf http://127.0.0.1:18080/metrics | grep -q 'gateway_request_duration_seconds'
-          curl -sf http://127.0.0.1:18081/metrics | grep -q 'router_request_duration_seconds'
-          curl -sf http://127.0.0.1:18080/openapi.json | grep -q 'AI Inference Gateway'
+          curl -sf http://127.0.0.1:18080/metrics -o /tmp/gateway-metrics.txt
+          grep -q 'gateway_request_duration_seconds' /tmp/gateway-metrics.txt
+          curl -sf http://127.0.0.1:18081/metrics -o /tmp/router-metrics.txt
+          grep -q 'router_request_duration_seconds' /tmp/router-metrics.txt
+          curl -sf http://127.0.0.1:18080/openapi.json -o /tmp/openapi.json
+          grep -q 'AI Inference Gateway' /tmp/openapi.json
           # Near-duplicate semantic cache hit (scan or RediSearch HNSW)
           curl -sS http://127.0.0.1:18080/v1/chat/completions \
             -H 'Content-Type: application/json' \
             -H 'X-API-Key: demo-key-change-me' \
             -d '{"model":"mock-small","messages":[{"role":"user","content":"Explain semantic caching in one sentence."}]}' \
-            | grep -Eq '"cached": ?false'
+            -o /tmp/cache-miss.json
+          grep -Eq '"cached": ?false' /tmp/cache-miss.json
           curl -sS http://127.0.0.1:18080/v1/chat/completions \
             -H 'Content-Type: application/json' \
             -H 'X-API-Key: demo-key-change-me' \
             -d '{"model":"mock-small","messages":[{"role":"user","content":"Explain semantic caching in a single sentence."}]}' \
-            | grep -Eq '"cached": ?true'
-          curl -sf http://127.0.0.1:18081/health | grep -q 'index_backend'
-          curl -sf http://127.0.0.1:18081/v1/cache/stats | grep -q 'index_backend'
+            -o /tmp/cache-hit.json
+          grep -Eq '"cached": ?true' /tmp/cache-hit.json
+          curl -sf http://127.0.0.1:18081/health -o /tmp/router-health.json
+          grep -q 'index_backend' /tmp/router-health.json
+          curl -sf http://127.0.0.1:18081/v1/cache/stats -o /tmp/cache-stats.json
+          grep -q 'index_backend' /tmp/cache-stats.json
       - name: Tear down
         if: always()
         run: docker compose down -v
