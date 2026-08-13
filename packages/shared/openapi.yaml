@@ -1,8 +1,11 @@
 openapi: 3.1.0
 info:
   title: AI Inference Gateway
-  version: 0.11.0
-  description: OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, budgets, rate limiting, tracing, adaptive routing, and indexed vector lookup.
+  version: 0.12.0
+  description: |
+    OpenAI-shaped edge for multi-cloud LLM routing with chat completions,
+    model listing, embeddings, semantic cache, streaming, budgets, rate
+    limiting, tracing, adaptive routing, and indexed vector lookup.
 servers:
   - url: http://localhost:18080
 paths:
@@ -30,11 +33,83 @@ paths:
       responses:
         "200":
           description: HTML docs
+  /v1/models:
+    get:
+      summary: List models
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: OpenAI-shaped `{ object: list, data: [model] }` catalog
+        "401":
+          description: Missing or invalid API key
+        "429":
+          description: Gateway per-key/per-tenant rate limit exceeded
+        "502":
+          description: Upstream router error
+  /v1/models/{model}:
+    get:
+      summary: Retrieve a model
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Model object
+        "401":
+          description: Missing or invalid API key
+        "404":
+          description: Unknown model id
+        "429":
+          description: Gateway rate limit exceeded
+  /v1/embeddings:
+    post:
+      summary: Create embeddings
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/embeddings.request.json"
+      responses:
+        "200":
+          description: |
+            OpenAI-shaped embedding list. Uses the same local embedder as the
+            semantic cache (`CACHE_EMBEDDING_PROVIDER`). Every response includes
+            `X-Request-Id`.
+        "400":
+          description: Invalid body or a non-embedding model id
+        "401":
+          description: Missing or invalid API key
+        "402":
+          description: Tenant hard USD/token budget exhausted
+        "413":
+          description: Request body exceeds MAX_BODY_BYTES
+        "429":
+          description: Gateway rate limit exceeded
+        "502":
+          description: Upstream router error
   /v1/chat/completions:
     post:
       summary: Create a chat completion
       security:
         - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/RequestId"
         - $ref: "#/components/parameters/CacheBypass"
@@ -112,3 +187,8 @@ components:
       name: X-API-Key
       description: |
         Maps to a tenant via TENANT_API_KEYS (or DEMO_API_KEY → tenant "default").
+        `Authorization: Bearer <key>` is accepted as an alias.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Same secret as X-API-Key (OpenAI client default).

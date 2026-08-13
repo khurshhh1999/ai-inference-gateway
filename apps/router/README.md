@@ -13,11 +13,19 @@ owns semantic caching (scan or HNSW-indexed), and enforces per-tenant USD/token 
   hints are the cold start. Idle providers (`ADAPTIVE_STALE_AFTER_SECONDS`) are probed
   again. Snapshot: `GET /v1/routing/stats`
 - **Model map:** `MODEL_MAP` maps logical names like `gpt-proxy` to Bedrock Claude /
-  Vertex Gemini ids
+  Vertex Gemini ids. Catalog: `GET /v1/models` (and `GET /v1/models/{id}`).
 - **Modes:** `PROVIDER_MODE=mock|bedrock|vertex|multi` (default `mock` needs no cloud keys)
 
 Responses include `provider` and `route_reason` (`cost` / `latency` / `affinity` /
 `failover` / `adaptive`). Route decisions are also logged.
+
+## Embeddings
+
+`POST /v1/embeddings` is OpenAI-shaped (`model` + `input` string or list).
+Vectors come from the same local embedder as the semantic cache
+(`CACHE_EMBEDDING_PROVIDER`; hashing by default). Aliases:
+`text-embedding-3-small`, `text-embedding-hashing`. Token usage is metered
+against the tenant budget; hashing list price is $0 unless you set per-model rates.
 
 ## Semantic cache
 

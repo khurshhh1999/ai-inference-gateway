@@ -3,6 +3,7 @@ import { after, before, describe, it } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { buildServer } from "../src/app.js";
 import { loadConfig, parseTenantApiKeys } from "../src/config.js";
+import { extractApiKey } from "../src/auth.js";
 import { MemoryRateLimiter } from "../src/rateLimit.js";
 import { resetMetricsForTests } from "../src/metrics.js";
 
@@ -44,7 +45,11 @@ describe("gateway", () => {
   it("serves OpenAPI document", async () => {
     const res = await app.inject({ method: "GET", url: "/openapi.json" });
     assert.equal(res.statusCode, 200);
-    assert.equal(res.json().info.title, "AI Inference Gateway");
+    const doc = res.json() as { info: { title: string }; paths: Record<string, unknown> };
+    assert.equal(doc.info.title, "AI Inference Gateway");
+    assert.ok(doc.paths["/v1/chat/completions"]);
+    assert.ok(doc.paths["/v1/models"]);
+    assert.ok(doc.paths["/v1/embeddings"]);
   });
 
   it("rejects missing API key", async () => {
@@ -304,6 +309,112 @@ describe("gateway", () => {
     assert.match(String(res.headers["x-request-id"] ?? ""), /^[0-9a-f-]{36}$/i);
   });
 
+  it("accepts Authorization Bearer as an API key alias", async () => {
+    let sawTenant: string | null = null;
+    globalThis.fetch = (async (_input, init) => {
+      const headers = init?.headers as Record<string, string>;
+      sawTenant = headers["x-tenant-id"] ?? null;
+      return new Response(
+        JSON.stringify({
+          object: "list",
+          data: [{ id: "mock-small", object: "model", created: 1, owned_by: "mock", purpose: "chat" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/v1/models",
+      headers: { authorization: "Bearer demo-key-change-me" },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(sawTenant, "default");
+    assert.equal(res.json().object, "list");
+  });
+
+  it("proxies GET /v1/models and echoes X-Request-Id", async () => {
+    let sawRequestId: string | null = null;
+    globalThis.fetch = (async (input, init) => {
+      const headers = init?.headers as Record<string, string>;
+      sawRequestId = headers["x-request-id"] ?? null;
+      assert.match(String(input), /\/v1\/models$/);
+      return new Response(
+        JSON.stringify({
+          object: "list",
+          data: [
+            {
+              id: "mock-small",
+              object: "model",
+              created: 1700000000,
+              owned_by: "mock",
+              purpose: "chat",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "x-request-id": headers["x-request-id"] ?? "",
+          },
+        },
+      );
+    }) as typeof fetch;
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/v1/models",
+      headers: {
+        "x-api-key": "demo-key-change-me",
+        "x-request-id": "models-gw-001",
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.headers["x-request-id"], "models-gw-001");
+    assert.equal(sawRequestId, "models-gw-001");
+    assert.equal(res.json().data[0].id, "mock-small");
+  });
+
+  it("proxies POST /v1/embeddings", async () => {
+    globalThis.fetch = (async (input, init) => {
+      assert.match(String(input), /\/v1\/embeddings$/);
+      const parsed = JSON.parse(String(init?.body ?? "{}")) as { model?: string };
+      assert.equal(parsed.model, "text-embedding-3-small");
+      return new Response(
+        JSON.stringify({
+          object: "list",
+          data: [{ object: "embedding", embedding: [0.1, 0.2], index: 0 }],
+          model: "text-embedding-3-small",
+          usage: { prompt_tokens: 2, total_tokens: 2 },
+          embedding_provider: "hashing",
+          dim: 2,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/embeddings",
+      headers: { "x-api-key": "demo-key-change-me" },
+      payload: { model: "text-embedding-3-small", input: "hello world" },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().dim, 2);
+    assert.equal(res.json().data[0].embedding.length, 2);
+  });
+
+  it("rejects embeddings without input", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/embeddings",
+      headers: { "x-api-key": "demo-key-change-me" },
+      payload: { model: "text-embedding-3-small" },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
   it("proxies SSE streams without buffering JSON", async () => {
     const sse =
       'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"mock-small","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}],"provider":"mock"}\n\n' +
@@ -350,6 +461,21 @@ describe("parseTenantApiKeys", () => {
     });
     assert.deepEqual(parseTenantApiKeys('{"k":"t"}'), { k: "t" });
     assert.deepEqual(parseTenantApiKeys(""), {});
+  });
+});
+
+describe("extractApiKey", () => {
+  it("prefers X-API-Key over Bearer", () => {
+    assert.equal(
+      extractApiKey({ "x-api-key": "from-header", authorization: "Bearer from-bearer" }),
+      "from-header",
+    );
+  });
+
+  it("reads Authorization Bearer", () => {
+    assert.equal(extractApiKey({ authorization: "Bearer sk-demo" }), "sk-demo");
+    assert.equal(extractApiKey({ authorization: "bearer sk-demo" }), "sk-demo");
+    assert.equal(extractApiKey({}), undefined);
   });
 });
 

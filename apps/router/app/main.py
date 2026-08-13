@@ -8,6 +8,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.api.chat import router as chat_router
+from app.api.embeddings import router as embeddings_router
+from app.api.models import router as models_router
 from app.budget.meter import get_budget_meter
 from app.cache.semantic import get_semantic_cache
 from app.config import settings
@@ -36,12 +38,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="AI Inference Router",
-    version="0.11.0",
+    version="0.12.0",
     description="Routing engine for the AI Inference Gateway",
     lifespan=lifespan,
 )
 
 app.include_router(chat_router)
+app.include_router(models_router)
+app.include_router(embeddings_router)
 
 
 @app.middleware("http")

@@ -1,9 +1,9 @@
 # AI Inference Gateway
 
 A multi-cloud **LLM inference gateway** that fronts **AWS Bedrock** and **GCP Vertex AI**
-behind one API — with **semantic caching** (HNSW-indexed when Redis Query Engine is
-present), **streaming**, **per-tenant budgeting**, **edge rate limiting**, and
-**adaptive routing**.
+behind one **OpenAI-shaped** API — with **semantic caching** (HNSW-indexed when Redis
+Query Engine is present), **streaming**, **per-tenant budgeting**, **edge rate limiting**,
+and **adaptive routing**.
 
 Built to cut model spend and latency for multi-tenant AI products: target **~40% lower
 model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](load/RESULTS.md)).
@@ -40,6 +40,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | Feature | Status |
 |---------|--------|
 | OpenAI-shaped `POST /v1/chat/completions` | Done |
+| OpenAI-shaped `GET /v1/models` + `POST /v1/embeddings` | Done |
 | Mock provider for local / CI (no cloud keys) | Done |
 | Multi-provider routing (Bedrock + Vertex) + failover | Done |
 | Semantic response cache (Redis; HNSW when Query Engine is present) | Done |
@@ -94,6 +95,31 @@ curl -s http://localhost:18080/v1/chat/completions \
   }' | jq .
 ```
 
+Auth is `X-API-Key` or OpenAI-style `Authorization: Bearer <key>` (same secret).
+
+### Models and embeddings
+
+`GET /v1/models` lists logical chat models from `MODEL_MAP` plus local embedding
+aliases. `POST /v1/embeddings` uses the same embedder as the semantic cache
+(`CACHE_EMBEDDING_PROVIDER`, hashing by default — no ML wheels).
+`text-embedding-3-small` is an SDK-friendly alias for that local embedder.
+
+```bash
+curl -s http://localhost:18080/v1/models \
+  -H "X-API-Key: demo-key-change-me" | jq .
+
+curl -s http://localhost:18080/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer demo-key-change-me" \
+  -d '{
+    "model": "text-embedding-3-small",
+    "input": ["semantic caching", "an unrelated prompt"]
+  }' | jq '{model, dim, embedding_provider, n: (.data|length), usage}'
+
+chmod +x scripts/demo_openai_api.sh
+./scripts/demo_openai_api.sh
+```
+
 ### Streaming (`stream: true`)
 
 OpenAI-shaped SSE: incremental `chat.completion.chunk` frames, then `data: [DONE]`.
@@ -126,6 +152,8 @@ curl -s http://localhost:18080/metrics | head
 curl -s http://localhost:18081/metrics | head
 curl -s http://localhost:18080/openapi.json | jq .info
 # Swagger UI: http://localhost:18080/docs
+curl -s http://localhost:18080/v1/models \
+  -H "X-API-Key: demo-key-change-me"
 curl -s http://localhost:18081/v1/cache/stats
 curl -s http://localhost:18081/v1/routing/stats
 curl -s http://localhost:18081/v1/tenants/default/usage
@@ -360,7 +388,8 @@ npm run dev
 ```
 
 CI (GitHub Actions) runs router lint + unit tests, gateway unit + build, and a
-Docker Compose smoke (health, chat completion, `/metrics`, OpenAPI).
+Docker Compose smoke (health, chat completion, models, embeddings, `/metrics`,
+OpenAPI).
 
 ## License
 

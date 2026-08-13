@@ -3,9 +3,9 @@ export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "AI Inference Gateway",
-    version: "0.11.0",
+    version: "0.12.0",
     description:
-      "OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, per-tenant budgets, rate limiting, tracing, and indexed vector lookup.",
+      "OpenAI-shaped edge for multi-cloud LLM routing: chat completions, model listing, embeddings, semantic cache, streaming, per-tenant budgets, rate limiting, tracing, and indexed vector lookup.",
   },
   servers: [{ url: "http://localhost:18080" }],
   paths: {
@@ -35,10 +35,109 @@ export const openApiDocument = {
         responses: { "200": { description: "OpenAPI 3.1 JSON" } },
       },
     },
+    "/docs": {
+      get: {
+        summary: "Swagger UI",
+        security: [],
+        responses: { "200": { description: "HTML docs" } },
+      },
+    },
+    "/v1/models": {
+      get: {
+        summary: "List models",
+        security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
+        parameters: [
+          {
+            name: "X-Request-Id",
+            in: "header",
+            required: false,
+            schema: { type: "string", maxLength: 128 },
+          },
+        ],
+        responses: {
+          "200": { description: "OpenAI-shaped model list" },
+          "401": { description: "Missing or invalid API key" },
+          "429": { description: "Gateway rate limit exceeded" },
+          "502": { description: "Upstream router error" },
+        },
+      },
+    },
+    "/v1/models/{model}": {
+      get: {
+        summary: "Retrieve a model",
+        security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
+        parameters: [
+          {
+            name: "model",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Request-Id",
+            in: "header",
+            required: false,
+            schema: { type: "string", maxLength: 128 },
+          },
+        ],
+        responses: {
+          "200": { description: "Model object" },
+          "401": { description: "Missing or invalid API key" },
+          "404": { description: "Unknown model" },
+          "429": { description: "Gateway rate limit exceeded" },
+        },
+      },
+    },
+    "/v1/embeddings": {
+      post: {
+        summary: "Create embeddings",
+        security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
+        parameters: [
+          {
+            name: "X-Request-Id",
+            in: "header",
+            required: false,
+            schema: { type: "string", maxLength: 128 },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["model", "input"],
+                properties: {
+                  model: { type: "string", minLength: 1 },
+                  input: {
+                    oneOf: [
+                      { type: "string" },
+                      { type: "array", items: { type: "string" }, minItems: 1 },
+                    ],
+                  },
+                  encoding_format: { type: "string", enum: ["float"], default: "float" },
+                  dimensions: { type: "integer", minimum: 32, maximum: 4096 },
+                  user: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "OpenAI-shaped embedding list" },
+          "400": { description: "Invalid request body or non-embedding model" },
+          "401": { description: "Missing or invalid API key" },
+          "402": { description: "Tenant hard budget exhausted" },
+          "413": { description: "Request body too large" },
+          "429": { description: "Gateway rate limit exceeded" },
+          "502": { description: "Upstream router error" },
+        },
+      },
+    },
     "/v1/chat/completions": {
       post: {
         summary: "Create a chat completion",
-        security: [{ ApiKeyAuth: [] }],
+        security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
         parameters: [
           {
             name: "X-Request-Id",
@@ -114,7 +213,12 @@ export const openApiDocument = {
         in: "header",
         name: "X-API-Key",
         description:
-          "Maps to a tenant via TENANT_API_KEYS (or DEMO_API_KEY → tenant default).",
+          "X-API-Key, or OpenAI-style Authorization: Bearer <key>. Maps to a tenant via TENANT_API_KEYS (or DEMO_API_KEY → tenant default).",
+      },
+      BearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        description: "Same secret as X-API-Key (OpenAI client default).",
       },
     },
   },

@@ -34,6 +34,8 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-API-Key: demo-key-change-me" \
   -d '{"model":"mock-small","messages":[{"role":"user","content":"kind demo"}]}'
+curl -s http://127.0.0.1:8080/v1/models \
+  -H "X-API-Key: demo-key-change-me"
 ```
 
 ## Cloud providers on Kubernetes

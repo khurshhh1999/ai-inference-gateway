@@ -49,11 +49,14 @@ async def _reset_singletons(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("app.cache.semantic._cache", cache)
     monkeypatch.setattr("app.api.chat.get_semantic_cache", lambda: cache)
+    monkeypatch.setattr("app.api.embeddings.get_semantic_cache", lambda: cache)
     monkeypatch.setattr("app.main.get_semantic_cache", lambda: cache)
     monkeypatch.setattr("app.budget.meter._meter", meter)
     monkeypatch.setattr("app.api.chat.get_budget_meter", lambda: meter)
+    monkeypatch.setattr("app.api.embeddings.get_budget_meter", lambda: meter)
     monkeypatch.setattr("app.main.get_budget_meter", lambda: meter)
     monkeypatch.setattr("app.api.chat.settings", budget_settings)
+    monkeypatch.setattr("app.api.embeddings.settings", budget_settings)
 
     yield
 

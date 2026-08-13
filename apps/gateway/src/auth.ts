@@ -24,3 +24,19 @@ export function resolveTenant(
   }
   return matched;
 }
+
+/** X-API-Key, or OpenAI-style `Authorization: Bearer <key>`. */
+export function extractApiKey(
+  headers: Record<string, unknown> | { [key: string]: unknown },
+): string | undefined {
+  const presented = headers["x-api-key"];
+  if (typeof presented === "string" && presented.length > 0) {
+    return presented;
+  }
+  const authorization = headers.authorization ?? headers["authorization"];
+  if (typeof authorization !== "string") {
+    return undefined;
+  }
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
+  return match?.[1];
+}

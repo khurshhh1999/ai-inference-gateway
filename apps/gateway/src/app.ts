@@ -4,7 +4,7 @@ import Fastify, {
   type FastifyReply,
   type FastifyRequest,
 } from "fastify";
-import { resolveTenant } from "./auth.js";
+import { resolveTenant, extractApiKey } from "./auth.js";
 import type { GatewayConfig } from "./config.js";
 import {
   authFailures,
@@ -22,6 +22,7 @@ import {
   hashApiKey,
   type RateLimiter,
 } from "./rateLimit.js";
+import { proxyJsonToRouter } from "./proxy.js";
 import { resolveRequestId } from "./requestId.js";
 import {
   endSpanError,
@@ -41,6 +42,14 @@ type ChatBody = {
   temperature?: number;
 };
 
+type EmbeddingsBody = {
+  model: string;
+  input: string | string[];
+  encoding_format?: string;
+  dimensions?: number;
+  user?: string;
+};
+
 type RequestExtras = FastifyRequest & {
   _startedAt?: number;
   tenantId?: string;
@@ -58,6 +67,8 @@ const PUBLIC_PATHS = new Set([
 function routeLabel(url: string): string {
   const path = url.split("?")[0] ?? url;
   if (path === "/v1/chat/completions") return "/v1/chat/completions";
+  if (path === "/v1/embeddings") return "/v1/embeddings";
+  if (path === "/v1/models" || path.startsWith("/v1/models/")) return "/v1/models";
   if (PUBLIC_PATHS.has(path)) return path;
   return "other";
 }
@@ -148,7 +159,7 @@ export async function buildServer(
     if (PUBLIC_PATHS.has(path)) {
       return;
     }
-    const key = request.headers["x-api-key"];
+    const key = extractApiKey(request.headers as Record<string, unknown>);
     if (typeof key !== "string") {
       authFailures.inc();
       return reply.code(401).send({
@@ -390,6 +401,56 @@ export async function buildServer(
         request.raw.off("aborted", onClientGone);
         reply.raw.off("close", onClientGone);
       }
+    });
+  });
+
+  app.get("/v1/models", async (request, reply) => {
+    const extras = request as RequestExtras;
+    const requestId = extras.requestId ?? resolveRequestId(undefined);
+    const tenantId = extras.tenantId ?? "default";
+    return proxyJsonToRouter(request, reply, config, tracer, requestId, tenantId, {
+      method: "GET",
+      upstreamPath: "/v1/models",
+      spanName: "gateway.models.list",
+      route: "/v1/models",
+    });
+  });
+
+  app.get("/v1/models/:modelId", async (request, reply) => {
+    const extras = request as RequestExtras;
+    const requestId = extras.requestId ?? resolveRequestId(undefined);
+    const tenantId = extras.tenantId ?? "default";
+    const { modelId } = request.params as { modelId: string };
+    return proxyJsonToRouter(request, reply, config, tracer, requestId, tenantId, {
+      method: "GET",
+      upstreamPath: `/v1/models/${encodeURIComponent(modelId)}`,
+      spanName: "gateway.models.retrieve",
+      route: "/v1/models",
+      spanAttrs: { "llm.model": modelId },
+    });
+  });
+
+  app.post<{ Body: EmbeddingsBody }>("/v1/embeddings", async (request, reply) => {
+    const extras = request as RequestExtras;
+    const requestId = extras.requestId ?? resolveRequestId(undefined);
+    const body = request.body;
+    if (!body?.model || body.input === undefined || body.input === null) {
+      bodyRejected.inc({ reason: "invalid_schema" });
+      return reply.code(400).send({
+        error: {
+          message: "Request must include model and input",
+          type: "invalid_request_error",
+        },
+      });
+    }
+    const tenantId = extras.tenantId ?? "default";
+    return proxyJsonToRouter(request, reply, config, tracer, requestId, tenantId, {
+      method: "POST",
+      upstreamPath: "/v1/embeddings",
+      spanName: "gateway.embeddings",
+      route: "/v1/embeddings",
+      body,
+      spanAttrs: { "llm.model": body.model },
     });
   });
 

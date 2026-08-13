@@ -69,6 +69,17 @@ def _l2_normalize(vec: list[float]) -> list[float]:
     return [v / norm for v in vec]
 
 
+def resize_embedding(vec: list[float], dim: int) -> list[float]:
+    """Truncate or pad a vector to ``dim`` and L2-normalize (OpenAI ``dimensions``)."""
+    if dim < 32:
+        raise ValueError("embedding dim must be >= 32")
+    if len(vec) == dim:
+        return vec
+    if len(vec) > dim:
+        return _l2_normalize(vec[:dim])
+    return _l2_normalize(vec + [0.0] * (dim - len(vec)))
+
+
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     if len(a) != len(b):
         raise ValueError("embedding dimensions must match")

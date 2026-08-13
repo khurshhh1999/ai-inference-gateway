@@ -73,6 +73,14 @@ class SemanticCache:
         self._index: CacheIndexBackend | None = None
 
     @property
+    def embedder(self) -> EmbeddingProvider:
+        return self._embedder
+
+    def embed(self, text: str) -> list[float]:
+        """Same vectors as semantic-cache lookup (tenant-agnostic)."""
+        return self._embedder.embed(text)
+
+    @property
     def embedding_provider_name(self) -> str:
         return type(self._embedder).__name__
 

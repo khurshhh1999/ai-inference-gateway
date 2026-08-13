@@ -105,6 +105,21 @@ jobs:
           grep -q 'index_backend' /tmp/router-health.json
           curl -sf http://127.0.0.1:18081/v1/cache/stats -o /tmp/cache-stats.json
           grep -q 'index_backend' /tmp/cache-stats.json
+          # OpenAI-shaped models + embeddings through the gateway
+          curl -sS http://127.0.0.1:18080/v1/models \
+            -H 'X-API-Key: demo-key-change-me' \
+            -H 'X-Request-Id: ci-smoke-models-001' \
+            -o /tmp/models.json
+          grep -q 'mock-small' /tmp/models.json
+          grep -q 'text-embedding-3-small' /tmp/models.json
+          curl -sS http://127.0.0.1:18080/v1/embeddings \
+            -H 'Content-Type: application/json' \
+            -H 'Authorization: Bearer demo-key-change-me' \
+            -H 'X-Request-Id: ci-smoke-emb-001' \
+            -d '{"model":"text-embedding-3-small","input":"ci smoke embeddings"}' \
+            -o /tmp/embeddings.json
+          grep -q '"object": "list"' /tmp/embeddings.json || grep -q '"object":"list"' /tmp/embeddings.json
+          grep -q 'embedding' /tmp/embeddings.json
       - name: Tear down
         if: always()
         run: docker compose down -v

@@ -23,7 +23,7 @@ _LATENCY_BUCKETS = (
 
 REQUEST_DURATION = Histogram(
     "router_request_duration_seconds",
-    "Chat completion request latency at the router",
+    "Router HTTP request latency",
     labelnames=("method", "route", "status", "cached", "stream"),
     buckets=_LATENCY_BUCKETS,
 )
