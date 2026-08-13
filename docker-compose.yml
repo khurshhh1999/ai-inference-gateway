@@ -1,6 +1,8 @@
 services:
   redis:
-    image: redis:7-alpine
+    # Redis 8 includes Query Engine (RediSearch) so CACHE_INDEX_BACKEND=auto can
+    # use HNSW KNN. Vanilla Redis 7 still works: the router falls back to scan.
+    image: ${REDIS_IMAGE:-redis:8-alpine}
     # Not published to the host by default (avoids clashing with other local Redis).
     # Use `docker compose exec redis redis-cli` for debugging, or add "6380:6379".
     healthcheck:
@@ -40,6 +42,9 @@ services:
       CACHE_MAX_ENTRIES: ${CACHE_MAX_ENTRIES:-1000}
       CACHE_EMBEDDING_PROVIDER: ${CACHE_EMBEDDING_PROVIDER:-hashing}
       CACHE_EMBEDDING_DIM: ${CACHE_EMBEDDING_DIM:-256}
+      CACHE_INDEX_BACKEND: ${CACHE_INDEX_BACKEND:-auto}
+      CACHE_ANN_TOP_K: ${CACHE_ANN_TOP_K:-25}
+      CACHE_ANN_EF_RUNTIME: ${CACHE_ANN_EF_RUNTIME:-64}
       CACHE_MOCK_SAVINGS_USD: ${CACHE_MOCK_SAVINGS_USD:-0.002}
       BUDGET_ENABLED: ${BUDGET_ENABLED:-true}
       BUDGET_SOFT_RATIO: ${BUDGET_SOFT_RATIO:-0.8}

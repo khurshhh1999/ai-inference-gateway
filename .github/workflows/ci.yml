@@ -83,6 +83,19 @@ jobs:
           curl -sf http://127.0.0.1:18080/metrics | grep -q 'gateway_request_duration_seconds'
           curl -sf http://127.0.0.1:18081/metrics | grep -q 'router_request_duration_seconds'
           curl -sf http://127.0.0.1:18080/openapi.json | grep -q 'AI Inference Gateway'
+          # Near-duplicate semantic cache hit (scan or RediSearch HNSW)
+          curl -sS http://127.0.0.1:18080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -H 'X-API-Key: demo-key-change-me' \
+            -d '{"model":"mock-small","messages":[{"role":"user","content":"Explain semantic caching in one sentence."}]}' \
+            | grep -Eq '"cached": ?false'
+          curl -sS http://127.0.0.1:18080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -H 'X-API-Key: demo-key-change-me' \
+            -d '{"model":"mock-small","messages":[{"role":"user","content":"Explain semantic caching in a single sentence."}]}' \
+            | grep -Eq '"cached": ?true'
+          curl -sf http://127.0.0.1:18081/health | grep -q 'index_backend'
+          curl -sf http://127.0.0.1:18081/v1/cache/stats | grep -q 'index_backend'
       - name: Tear down
         if: always()
         run: docker compose down -v

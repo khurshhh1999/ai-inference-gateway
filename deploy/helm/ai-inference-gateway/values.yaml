@@ -25,7 +25,8 @@ service:
 
 redis:
   enabled: true
-  image: redis:7-alpine
+  # Redis 8 ships Query Engine (RediSearch). Use redis:7-alpine + scan if needed.
+  image: redis:8-alpine
   port: 6379
 
 auth:
@@ -48,8 +49,14 @@ router:
   routingPrimary: bedrock
   routingFallback: "vertex,mock"
   cacheEnabled: "true"
+  cacheIndexBackend: auto
+  cacheEmbeddingProvider: hashing
+  cacheAnnTopK: "25"
   budgetEnabled: "true"
   redisUrl: redis://redis:6379/0
+  adaptiveEwmaAlpha: "0.3"
+  adaptiveErrorPenaltyMs: "1000"
+  adaptiveStaleAfterSeconds: "30"
   modelMap: >-
     gpt-proxy=bedrock:anthropic.claude-3-haiku-20240307-v1:0,vertex:gemini-1.5-flash;mock-small=mock:mock-small
   # Optional cloud — leave empty for mock demos

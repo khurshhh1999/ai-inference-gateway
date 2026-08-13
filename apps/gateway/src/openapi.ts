@@ -3,9 +3,9 @@ export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "AI Inference Gateway",
-    version: "0.10.0",
+    version: "0.11.0",
     description:
-      "OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, per-tenant budgets, rate limiting, tracing, and adaptive routing.",
+      "OpenAI-shaped chat completions edge for multi-cloud LLM routing with semantic cache, streaming, per-tenant budgets, rate limiting, tracing, and indexed vector lookup.",
   },
   servers: [{ url: "http://localhost:18080" }],
   paths: {

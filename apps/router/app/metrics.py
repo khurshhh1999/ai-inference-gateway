@@ -51,6 +51,19 @@ CACHE_MISSES = Counter(
     "Semantic cache misses",
 )
 
+CACHE_LOOKUP_CANDIDATES = Histogram(
+    "router_cache_lookup_candidates",
+    "Candidates scored per semantic cache lookup (scan ≈ namespace size; ANN ≈ top-k)",
+    labelnames=("backend",),
+    buckets=(1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500),
+)
+
+CACHE_INDEX_BACKEND = Gauge(
+    "router_cache_index_backend_info",
+    "Active semantic cache index backend (1 = in use)",
+    labelnames=("backend",),
+)
+
 USD_SAVED = Counter(
     "router_estimated_usd_saved_total",
     "Estimated USD avoided via semantic cache hits",
@@ -140,6 +153,15 @@ def record_cache_hit(saved_usd: float) -> None:
 
 def record_cache_miss() -> None:
     CACHE_MISSES.inc()
+
+
+def observe_cache_lookup_candidates(backend: str, count: int) -> None:
+    CACHE_LOOKUP_CANDIDATES.labels(backend=backend[:32]).observe(max(0, count))
+
+
+def set_cache_index_backend(backend: str) -> None:
+    for name in ("scan", "redisearch"):
+        CACHE_INDEX_BACKEND.labels(backend=name).set(1.0 if name == backend else 0.0)
 
 
 def record_spend(provider: str, usd: float) -> None:

@@ -36,7 +36,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="AI Inference Router",
-    version="0.10.0",
+    version="0.11.0",
     description="Routing engine for the AI Inference Gateway",
     lifespan=lifespan,
 )
@@ -107,6 +107,11 @@ async def health() -> JSONResponse:
                 "enabled": settings.cache_enabled,
                 "healthy": cache_ok,
                 "similarity_threshold": settings.cache_similarity_threshold,
+                "index_backend": (
+                    get_semantic_cache().index_backend_name if settings.cache_enabled else "off"
+                ),
+                "embedding_provider": settings.cache_embedding_provider,
+                "ann_top_k": settings.cache_ann_top_k,
             },
             "budget": {
                 "enabled": settings.budget_enabled,

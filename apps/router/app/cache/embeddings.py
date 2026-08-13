@@ -25,7 +25,9 @@ class HashingEmbedder(EmbeddingProvider):
     fixed-dim L2-normalized vector. Pair with ``combined_similarity`` (cosine +
     sequence ratio) so near-duplicate / lightly paraphrased prompts hit without
     downloading a model. For deeper paraphrase matching, set
-    ``CACHE_EMBEDDING_PROVIDER=sentence-transformers``.
+    ``CACHE_EMBEDDING_PROVIDER=sentence-transformers`` (optional extra; no cloud
+    embedding API is required). Pair with ``CACHE_INDEX_BACKEND=auto`` so Redis 8
+    Query Engine can KNN-index the same vectors.
     """
 
     def __init__(self, dim: int = 256) -> None:

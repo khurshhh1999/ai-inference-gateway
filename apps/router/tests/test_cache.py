@@ -60,6 +60,7 @@ async def test_semantic_cache_hit_and_tenant_isolation() -> None:
         ttl_seconds=60,
         max_entries=10,
         metrics=metrics,
+        index_backend="scan",
     )
     response = ChatCompletionResponse(
         id="chatcmpl-1",
@@ -110,6 +111,7 @@ async def test_semantic_cache_max_entries_eviction() -> None:
         ttl_seconds=60,
         max_entries=2,
         metrics=CacheMetrics(),
+        index_backend="scan",
     )
     base = ChatCompletionResponse(
         id="chatcmpl-x",
@@ -170,6 +172,7 @@ def test_chat_near_duplicate_cache_hit(client: TestClient) -> None:
     assert stats.status_code == 200
     assert stats.json()["cache_hit_total"] >= 1
     assert stats.json()["estimated_usd_saved"] > 0
+    assert stats.json()["index_backend"] == "scan"
 
 
 def test_cache_bypass_header(client: TestClient) -> None:
@@ -200,3 +203,4 @@ def test_health_includes_cache(client: TestClient) -> None:
     assert body["status"] == "ok"
     assert body["cache"]["enabled"] is True
     assert body["cache"]["healthy"] is True
+    assert body["cache"]["index_backend"] in {"scan", "auto", "redisearch"}

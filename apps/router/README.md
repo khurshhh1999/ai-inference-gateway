@@ -1,7 +1,7 @@
 # AI Inference Router
 
 FastAPI service that selects a provider, talks to Bedrock / Vertex / mock adapters,
-owns semantic caching, and enforces per-tenant USD/token budgets.
+owns semantic caching (scan or HNSW-indexed), and enforces per-tenant USD/token budgets.
 
 ## Routing
 
@@ -18,6 +18,15 @@ owns semantic caching, and enforces per-tenant USD/token budgets.
 
 Responses include `provider` and `route_reason` (`cost` / `latency` / `affinity` /
 `failover` / `adaptive`). Route decisions are also logged.
+
+## Semantic cache
+
+- Namespace: tenant + model family. Never shared across tenants.
+- Default embedder is hashing (no ML deps). Optional
+  `CACHE_EMBEDDING_PROVIDER=sentence-transformers` via `pip install '.[embeddings]'`.
+- `CACHE_INDEX_BACKEND=auto` (default): HNSW KNN when Redis Query Engine is loaded
+  (Redis 8 / Redis Stack), otherwise an O(n) scan capped by `CACHE_MAX_ENTRIES`.
+- Stats: `GET /v1/cache/stats` (`index_backend`, hit/miss, estimated USD saved).
 
 ## Budgets
 

@@ -32,7 +32,8 @@ Internet → gateway (public) → router (private) → Redis (private)
 - Co-locate the **router** with the cloud model API you prefer for latency
   (`prefer_latency`, or `adaptive` once live EWMA has samples).
 - Keep **Redis** in the same VPC / VPC connector as the **router** (cache +
-  budgets) and reachable from the **gateway** (rate-limit buckets).
+  budgets) and reachable from the **gateway** (rate-limit buckets). Redis 8+
+  (Query Engine) enables HNSW cache lookup; older Redis falls back to scan.
 - Expose only the **gateway** publicly; leave router and Redis internal.
 
 ## Build images

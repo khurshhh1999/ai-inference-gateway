@@ -44,3 +44,7 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
    [`../aws/README.md`](../aws/README.md) and [`../gcp/README.md`](../gcp/README.md).
 
 Do not put long-lived cloud keys in `values.yaml` committed to git.
+
+The chart defaults to `redis:8-alpine` so the router can use HNSW cache lookup
+(`CACHE_INDEX_BACKEND=auto`). Override `redis.image=redis:7-alpine` and
+`router.cacheIndexBackend=scan` if you need vanilla Redis.

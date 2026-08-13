@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
@@ -9,7 +8,17 @@ from typing import Any
 
 import redis.asyncio as redis
 
-from app.cache.embeddings import EmbeddingProvider, combined_similarity, get_embedder
+from app.cache.embeddings import (
+    EmbeddingProvider,
+    combined_similarity,
+    get_embedder,
+    sequence_similarity,
+)
+from app.cache.index_backend import (
+    AUTO_BACKEND,
+    CacheIndexBackend,
+    resolve_index_backend,
+)
 from app.cache.metrics import CacheMetrics, cache_metrics
 from app.config import Settings
 from app.config import settings as default_settings
@@ -29,11 +38,12 @@ class CacheHit:
 
 
 class SemanticCache:
-    """Tenant-scoped semantic response cache backed by Redis + cosine similarity.
+    """Tenant-scoped semantic response cache.
 
-    Stores embeddings alongside completions under ``sc:{tenant}:{model_family}:*``.
-    Lookup scans the namespace (bounded by ``max_entries``) and returns the best
-    match above ``similarity_threshold``. Works with vanilla Redis (no RediSearch).
+    Default lookup is an O(n) scan of the namespace (vanilla Redis). When Redis
+    Query Engine / RediSearch is available, ``CACHE_INDEX_BACKEND=auto`` (or
+    ``redisearch``) switches to HNSW KNN and re-ranks the top-k with the same
+    combined similarity used by the scan path.
     """
 
     def __init__(
@@ -46,6 +56,9 @@ class SemanticCache:
         ttl_seconds: int = 3600,
         max_entries: int = 1000,
         metrics: CacheMetrics | None = None,
+        index_backend: str = AUTO_BACKEND,
+        ann_top_k: int = 25,
+        ann_ef_runtime: int = 64,
     ) -> None:
         self._redis = client
         self._embedder = embedder
@@ -54,6 +67,24 @@ class SemanticCache:
         self.ttl_seconds = ttl_seconds
         self.max_entries = max_entries
         self._metrics = metrics or cache_metrics
+        self._requested_backend = index_backend
+        self.ann_top_k = max(1, ann_top_k)
+        self.ann_ef_runtime = max(1, ann_ef_runtime)
+        self._index: CacheIndexBackend | None = None
+
+    @property
+    def embedding_provider_name(self) -> str:
+        return type(self._embedder).__name__
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._embedder.dim
+
+    @property
+    def index_backend_name(self) -> str:
+        if self._index is None:
+            return self._requested_backend
+        return self._index.name
 
     @staticmethod
     def model_family(model: str) -> str:
@@ -69,6 +100,37 @@ class SemanticCache:
     def embed_prompt(self, prompt: str) -> list[float]:
         return self._embedder.embed(prompt)
 
+    async def _ensure_backend(self) -> CacheIndexBackend:
+        if self._index is None:
+            self._index = await resolve_index_backend(
+                self._redis,
+                self._requested_backend,
+                dim=self._embedder.dim,
+                ann_top_k=self.ann_top_k,
+                ann_ef_runtime=self.ann_ef_runtime,
+            )
+        return self._index
+
+    def _score_candidate(
+        self,
+        *,
+        query_embedding: list[float],
+        query_prompt: str,
+        stored_prompt: str,
+        stored_embedding: list[float] | None,
+        cosine: float | None,
+    ) -> float:
+        if stored_embedding is not None:
+            return combined_similarity(
+                query_embedding=query_embedding,
+                stored_embedding=stored_embedding,
+                query_prompt=query_prompt,
+                stored_prompt=stored_prompt,
+            )
+        if cosine is not None:
+            return max(cosine, sequence_similarity(query_prompt, stored_prompt))
+        raise ValueError("candidate missing embedding and cosine")
+
     async def lookup(
         self,
         *,
@@ -81,67 +143,62 @@ class SemanticCache:
 
         ns = self._ns(tenant, self.model_family(model))
         query = self.embed_prompt(prompt)
-        ids = await self._redis.zrange(f"{ns}:index", 0, -1)
-        if not ids:
-            self._metrics.record_miss()
-            return None
+        backend = await self._ensure_backend()
+        found = await backend.candidates(
+            ns,
+            query,
+            top_k=self.ann_top_k,
+            ef_runtime=self.ann_ef_runtime,
+        )
 
         best: CacheHit | None = None
         stale: list[str] = []
 
-        for raw_id in ids:
-            entry_id = raw_id.decode() if isinstance(raw_id, bytes) else str(raw_id)
-            payload = await self._redis.get(f"{ns}:e:{entry_id}")
-            if payload is None:
-                stale.append(entry_id)
-                continue
-            data = json.loads(payload)
-            embedding = data.get("embedding")
-            stored_prompt = data.get("prompt") or data.get("prompt_preview") or ""
-            if not isinstance(embedding, list):
-                stale.append(entry_id)
-                continue
+        for cand in found:
             try:
-                score = combined_similarity(
+                score = self._score_candidate(
                     query_embedding=query,
-                    stored_embedding=embedding,
                     query_prompt=prompt,
-                    stored_prompt=str(stored_prompt),
+                    stored_prompt=cand.prompt,
+                    stored_embedding=cand.embedding,
+                    cosine=cand.cosine,
                 )
             except ValueError:
-                stale.append(entry_id)
+                stale.append(cand.entry_id)
                 continue
             if score < self.similarity_threshold:
                 continue
             if best is None or score > best.similarity:
-                response = ChatCompletionResponse.model_validate(data["response"])
+                response = ChatCompletionResponse.model_validate(cand.response)
                 response.cached = True
                 response.route_reason = "cache_hit"
                 best = CacheHit(
                     response=response,
                     similarity=score,
-                    saved_usd=float(data.get("cost_usd", 0.0)),
-                    entry_id=entry_id,
+                    saved_usd=float(cand.cost_usd),
+                    entry_id=cand.entry_id,
                 )
 
         if stale:
-            await self._redis.zrem(f"{ns}:index", *stale)
+            await backend.drop_ids(ns, stale)
 
         if best is None:
             self._metrics.record_miss()
             logger.info(
-                "cache miss tenant=%s model=%s candidates=%s",
+                "cache miss tenant=%s model=%s backend=%s candidates=%s",
                 tenant,
                 model,
-                len(ids),
+                backend.name,
+                len(found),
             )
             return None
 
         self._metrics.record_hit(best.saved_usd)
         logger.info(
-            "cache hit tenant=%s model=%s similarity=%.4f saved_usd=%.6f entry=%s",
+            "cache hit tenant=%s model=%s backend=%s similarity=%.4f saved_usd=%.6f entry=%s",
             tenant,
             model,
+            backend.name,
             best.similarity,
             best.saved_usd,
             best.entry_id,
@@ -174,45 +231,22 @@ class SemanticCache:
             "prompt_preview": prompt[:200],
             "created_at": int(time.time()),
         }
-        pipe = self._redis.pipeline()
-        pipe.set(
-            f"{ns}:e:{entry_id}",
-            json.dumps(payload),
-            ex=self.ttl_seconds if self.ttl_seconds > 0 else None,
-        )
-        pipe.zadd(f"{ns}:index", {entry_id: time.time()})
-        await pipe.execute()
-        await self._evict_if_needed(ns)
-        if self.ttl_seconds > 0:
-            # Keep the index key from growing forever if entries expire individually.
-            await self._redis.expire(f"{ns}:index", self.ttl_seconds + 60)
+        backend = await self._ensure_backend()
+        await backend.upsert(ns, entry_id, embedding, payload, self.ttl_seconds)
+        await backend.evict_if_needed(ns, self.max_entries)
         logger.info(
-            "cache store tenant=%s model=%s entry=%s cost_usd=%.6f",
+            "cache store tenant=%s model=%s backend=%s entry=%s cost_usd=%.6f",
             tenant,
             model,
+            backend.name,
             entry_id,
             cost_usd,
         )
         return entry_id
 
-    async def _evict_if_needed(self, ns: str) -> None:
-        size = await self._redis.zcard(f"{ns}:index")
-        if size <= self.max_entries:
-            return
-        # Drop oldest (lowest score = earliest insert time).
-        overflow = size - self.max_entries
-        old = await self._redis.zrange(f"{ns}:index", 0, overflow - 1)
-        if not old:
-            return
-        ids = [i.decode() if isinstance(i, bytes) else str(i) for i in old]
-        pipe = self._redis.pipeline()
-        pipe.zrem(f"{ns}:index", *ids)
-        for entry_id in ids:
-            pipe.delete(f"{ns}:e:{entry_id}")
-        await pipe.execute()
-
     async def ping(self) -> bool:
         try:
+            await self._ensure_backend()
             return bool(await self._redis.ping())
         except Exception:  # noqa: BLE001
             return False
@@ -266,6 +300,9 @@ def build_semantic_cache(
         ttl_seconds=cfg.cache_ttl_seconds,
         max_entries=cfg.cache_max_entries,
         metrics=metrics or cache_metrics,
+        index_backend=cfg.cache_index_backend,
+        ann_top_k=cfg.cache_ann_top_k,
+        ann_ef_runtime=cfg.cache_ann_ef_runtime,
     )
 
 
@@ -276,12 +313,15 @@ def get_semantic_cache(settings: Settings | None = None) -> SemanticCache:
     if _cache is None:
         _cache = build_semantic_cache(default_settings)
         logger.info(
-            "semantic cache ready enabled=%s threshold=%.3f ttl=%ss max_entries=%s embedder=%s",
+            "semantic cache ready enabled=%s threshold=%.3f ttl=%ss max_entries=%s "
+            "embedder=%s index_backend=%s ann_top_k=%s",
             default_settings.cache_enabled,
             default_settings.cache_similarity_threshold,
             default_settings.cache_ttl_seconds,
             default_settings.cache_max_entries,
             default_settings.cache_embedding_provider,
+            default_settings.cache_index_backend,
+            default_settings.cache_ann_top_k,
         )
     return _cache
 

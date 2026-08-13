@@ -212,6 +212,32 @@
           "refId": "B"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache lookup candidates (scan vs ANN)",
+      "id": 14,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, backend) (rate(router_cache_lookup_candidates_bucket[5m])))",
+          "legendFormat": "{{backend}} p95",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache index backend",
+      "id": 15,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "targets": [
+        {
+          "expr": "router_cache_index_backend_info",
+          "legendFormat": "{{backend}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "refresh": "10s",

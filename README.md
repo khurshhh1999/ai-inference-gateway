@@ -1,8 +1,9 @@
 # AI Inference Gateway
 
 A multi-cloud **LLM inference gateway** that fronts **AWS Bedrock** and **GCP Vertex AI**
-behind one API — with **semantic caching**, **streaming**, **per-tenant budgeting**,
-**edge rate limiting**, and **adaptive routing**.
+behind one API — with **semantic caching** (HNSW-indexed when Redis Query Engine is
+present), **streaming**, **per-tenant budgeting**, **edge rate limiting**, and
+**adaptive routing**.
 
 Built to cut model spend and latency for multi-tenant AI products: target **~40% lower
 model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](load/RESULTS.md)).
@@ -29,7 +30,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 |---------|------|----------------|
 | **gateway** | 8080 (host **18080**) | Public REST + SSE edge (TypeScript / Fastify) |
 | **router** | 8081 (host **18081**) | Routing, providers, semantic cache, budgets (FastAPI) |
-| **Redis** | 6379 (internal) | Cache vectors, budget counters, gateway rate-limit buckets |
+| **Redis** | 6379 (internal) | Cache vectors (scan or HNSW), budget counters, gateway rate-limit buckets |
 | **Prometheus** | 9090 (host **19090**) | Metrics scrape (compose profile `monitoring`) |
 | **Grafana** | 3000 (host **13000**) | Dashboards (compose profile `monitoring`) |
 | **Jaeger** | 16686 (host **16686**) | Trace UI (compose profile `monitoring`) |
@@ -41,7 +42,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | OpenAI-shaped `POST /v1/chat/completions` | Done |
 | Mock provider for local / CI (no cloud keys) | Done |
 | Multi-provider routing (Bedrock + Vertex) + failover | Done |
-| Semantic response cache (Redis) | Done |
+| Semantic response cache (Redis; HNSW when Query Engine is present) | Done |
 | SSE token streaming | Done |
 | Per-tenant API keys + USD/token budgets | Done |
 | Gateway per-key / per-tenant rate limiting | Done |
@@ -154,7 +155,7 @@ chmod +x scripts/demo_tracing.sh
 Stable Prometheus names use `gateway_*` / `router_*` prefixes with explicit
 histogram buckets for p95. Grafana dashboard **AI Inference Gateway Overview**
 is provisioned under the `monitoring` profile (including adaptive EWMA latency
-and score); alerts cover error rate, miss p95, budget burn, and provider
+and score, plus cache lookup candidates by backend); alerts cover error rate, miss p95, budget burn, and provider
 errors (`monitoring/alerts.yml`). Jaeger is included in the same profile for
 distributed traces.
 
@@ -215,13 +216,27 @@ when similarity ≥ `CACHE_SIMILARITY_THRESHOLD` (default `0.90`: max of embeddi
 cosine and string near-duplicate ratio). Scope the cache with `X-Tenant-Id`
 (default `default`); skip with `X-Cache-Bypass: 1`.
 
+Lookup backend (`CACHE_INDEX_BACKEND`, default `auto`):
+
+| Backend | When | Lookup |
+|---------|------|--------|
+| **redisearch** | Redis 8+ / Redis Stack (Query Engine loaded) | HNSW KNN top-`CACHE_ANN_TOP_K`, then the same similarity re-rank |
+| **scan** | Vanilla Redis, fakeredis, or `CACHE_INDEX_BACKEND=scan` | O(n) scan of the tenant+model namespace (capped by `CACHE_MAX_ENTRIES`) |
+
+Compose uses `redis:8-alpine` so `auto` selects HNSW locally. Unit tests and
+CI stay on the hashing embedder (no ML wheels). For deeper paraphrase matching,
+`pip install '.[embeddings]'` in the router and set
+`CACHE_EMBEDDING_PROVIDER=sentence-transformers` (set `CACHE_EMBEDDING_DIM=384`
+to match all-MiniLM-L6-v2).
+
 ```bash
 chmod +x scripts/demo_semantic_cache.sh
 ./scripts/demo_semantic_cache.sh
 ```
 
 The script prints per-request `cached` / `route_reason` and router stats
-(`cache_hit_total`, `cache_miss_total`, `estimated_usd_saved`).
+(`index_backend`, `cache_hit_total`, `cache_miss_total`, `estimated_usd_saved`).
+`GET /v1/cache/stats` and `/health` report the resolved backend.
 
 ### Load test (p95 evidence)
 
@@ -298,6 +313,10 @@ Copy `.env.example` → `.env`. Important variables:
 | `CACHE_TTL_SECONDS` | `3600` | Entry TTL |
 | `CACHE_MAX_ENTRIES` | `1000` | Per tenant+model family cap |
 | `CACHE_EMBEDDING_PROVIDER` | `hashing` | `hashing` \| `sentence-transformers` |
+| `CACHE_EMBEDDING_DIM` | `256` | Vector size (use `384` with sentence-transformers) |
+| `CACHE_INDEX_BACKEND` | `auto` | `auto` \| `scan` \| `redisearch` (HNSW when Query Engine is present) |
+| `CACHE_ANN_TOP_K` | `25` | Neighbors fetched from HNSW before similarity re-rank |
+| `CACHE_ANN_EF_RUNTIME` | `64` | HNSW `EF_RUNTIME` at query time |
 | `BUDGET_ENABLED` | `true` | Per-tenant USD/token metering |
 | `BUDGET_SOFT_RATIO` | `0.8` | Soft warning at this fraction of a hard limit |
 | `BUDGET_HARD_STATUS` | `402` | HTTP status when budget exhausted (`402` or `429`) |

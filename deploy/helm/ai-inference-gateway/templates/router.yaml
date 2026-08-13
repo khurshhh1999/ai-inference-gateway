@@ -38,8 +38,20 @@ spec:
               value: {{ .Values.router.routingFallback | quote }}
             - name: CACHE_ENABLED
               value: {{ .Values.router.cacheEnabled | quote }}
+            - name: CACHE_INDEX_BACKEND
+              value: {{ .Values.router.cacheIndexBackend | quote }}
+            - name: CACHE_EMBEDDING_PROVIDER
+              value: {{ .Values.router.cacheEmbeddingProvider | quote }}
+            - name: CACHE_ANN_TOP_K
+              value: {{ .Values.router.cacheAnnTopK | quote }}
             - name: BUDGET_ENABLED
               value: {{ .Values.router.budgetEnabled | quote }}
+            - name: ADAPTIVE_EWMA_ALPHA
+              value: {{ .Values.router.adaptiveEwmaAlpha | quote }}
+            - name: ADAPTIVE_ERROR_PENALTY_MS
+              value: {{ .Values.router.adaptiveErrorPenaltyMs | quote }}
+            - name: ADAPTIVE_STALE_AFTER_SECONDS
+              value: {{ .Values.router.adaptiveStaleAfterSeconds | quote }}
             - name: MODEL_MAP
               value: {{ .Values.router.modelMap | quote }}
             {{- if .Values.router.awsRegion }}

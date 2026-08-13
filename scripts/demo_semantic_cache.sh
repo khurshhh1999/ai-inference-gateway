@@ -64,3 +64,4 @@ echo
 echo "Local tally for this script: hits=${hits} misses=${misses}"
 echo "Near-duplicates of the semantic-caching question should show cached=True."
 echo "Unrelated prompts (e.g. capital of France) should miss and call the provider."
+echo "index_backend is redisearch when Redis Query Engine is present, else scan."

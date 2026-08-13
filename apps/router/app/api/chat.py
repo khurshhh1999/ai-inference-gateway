@@ -440,11 +440,19 @@ async def _maybe_store_cache(
 async def cache_stats() -> dict:
     """Hit/miss counters and estimated USD saved (process-local)."""
     cache = get_semantic_cache()
+    try:
+        await cache.ping()
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "enabled": cache.enabled,
         "similarity_threshold": cache.similarity_threshold,
         "ttl_seconds": cache.ttl_seconds,
         "max_entries": cache.max_entries,
+        "index_backend": cache.index_backend_name,
+        "embedding_provider": cache.embedding_provider_name,
+        "embedding_dim": cache.embedding_dim,
+        "ann_top_k": cache.ann_top_k,
         **cache_metrics.as_dict(),
     }
 

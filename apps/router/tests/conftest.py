@@ -29,6 +29,7 @@ async def _reset_singletons(monkeypatch: pytest.MonkeyPatch) -> None:
         ttl_seconds=3600,
         max_entries=100,
         metrics=cache_metrics,
+        index_backend="scan",
     )
     budget_settings = Settings(
         budget_enabled=True,

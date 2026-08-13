@@ -151,6 +151,10 @@ class Settings(BaseSettings):
     cache_max_entries: int = 1000
     cache_embedding_provider: str = "hashing"  # hashing | sentence-transformers
     cache_embedding_dim: int = 256
+    # scan (O(n), vanilla Redis) | redisearch (HNSW KNN) | auto (search module → ANN)
+    cache_index_backend: str = "auto"
+    cache_ann_top_k: int = 25
+    cache_ann_ef_runtime: int = 64
     # Fallback USD/request used for mock (zero list price) so demos still show $ saved
     cache_mock_savings_usd: float = 0.002
 
