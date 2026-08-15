@@ -23,10 +23,24 @@ spec:
               value: "8080"
             - name: ROUTER_URL
               value: https://ai-router-HASH-uc.a.run.app
+            - name: REDIS_URL
+              value: redis://REDIS_HOST:6379/0
             - name: LOG_LEVEL
               value: info
             - name: MAX_BODY_BYTES
               value: "262144"
+            - name: RATE_LIMIT_ENABLED
+              value: "true"
+            - name: RATE_LIMIT_BACKEND
+              value: redis
+            - name: RATE_LIMIT_KEY_QPS
+              value: "10"
+            - name: RATE_LIMIT_KEY_BURST
+              value: "20"
+            - name: OTEL_ENABLED
+              value: "true"
+            - name: OTEL_SERVICE_NAME
+              value: gateway
             - name: DEMO_API_KEY
               valueFrom:
                 secretKeyRef:

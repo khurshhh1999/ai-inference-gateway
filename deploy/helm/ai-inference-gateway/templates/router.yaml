@@ -54,6 +54,14 @@ spec:
               value: {{ .Values.router.adaptiveStaleAfterSeconds | quote }}
             - name: MODEL_MAP
               value: {{ .Values.router.modelMap | quote }}
+            - name: OTEL_ENABLED
+              value: {{ .Values.router.otelEnabled | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.router.otelServiceName | quote }}
+            {{- if .Values.router.otelExporterOtlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.router.otelExporterOtlpEndpoint | quote }}
+            {{- end }}
             {{- if .Values.router.awsRegion }}
             - name: AWS_REGION
               value: {{ .Values.router.awsRegion | quote }}

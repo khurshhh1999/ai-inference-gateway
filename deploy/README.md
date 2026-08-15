@@ -1,14 +1,15 @@
-# Deploy sketches
+# Deploy
 
 Deploy paths for running the gateway near AWS Bedrock, near GCP Vertex AI,
-or both. These are **sketches** (documented manifests + IAM notes), not a
-turnkey production platform.
+or both. **One live path is documented end-to-end** (ECS + Bedrock); the others
+remain sketches / local demos.
 
-| Path | Cloud | Primary runtime | Provider |
-|------|-------|-----------------|----------|
-| [aws/](aws/) | AWS | ECS Fargate (EKS notes) | Bedrock |
-| [gcp/](gcp/) | GCP | Cloud Run (GKE notes) | Vertex AI |
-| [helm/](helm/) | local | kind / any Kubernetes | mock (default) |
+| Path | Cloud | Primary runtime | Provider | Status |
+|------|-------|-----------------|----------|--------|
+| [aws/LIVE.md](aws/LIVE.md) | AWS | ECS Fargate (+ Compose dry-run) | Bedrock | **Live path** |
+| [aws/](aws/) | AWS | ECS Fargate (EKS notes) | Bedrock | IAM + task defs |
+| [gcp/](gcp/) | GCP | Cloud Run (GKE notes) | Vertex AI | Sketch |
+| [helm/](helm/) | local | kind / any Kubernetes | mock (default) | Local zero-cred |
 
 ## Principles
 
@@ -54,6 +55,12 @@ docker build \
 
 Push to ECR (AWS) or Artifact Registry (GCP), then reference those tags from
 the task/service definitions in `aws/` and `gcp/`.
+
+## Live Bedrock (quick links)
+
+1. Compose dry-run: `docker compose -f docker-compose.yml -f docker-compose.bedrock.yml up --build`
+2. Verify: `./scripts/verify_live_bedrock.sh` → expects `provider=bedrock`
+3. ECS + Secrets Manager: [`aws/LIVE.md`](aws/LIVE.md)
 
 ## Required runtime config (minimum)
 

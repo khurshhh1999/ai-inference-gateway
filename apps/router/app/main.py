@@ -38,7 +38,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="AI Inference Router",
-    version="0.12.0",
+    version="0.13.0",
     description="Routing engine for the AI Inference Gateway",
     lifespan=lifespan,
 )

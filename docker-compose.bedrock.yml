@@ -1,0 +1,29 @@
+# Live Bedrock overlay — builds the router with boto3 and targets AWS Bedrock.
+# Default compose (no overlay) stays PROVIDER_MODE=mock for local/CI.
+#
+# Usage (credentials via env / ~/.aws — never commit secrets):
+#   export AWS_REGION=us-east-1
+#   # Prefer: AWS_PROFILE=... or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
+#   docker compose -f docker-compose.yml -f docker-compose.bedrock.yml up --build
+#   ./scripts/verify_live_bedrock.sh
+#
+# ECS Fargate is the production-shaped path; see deploy/aws/LIVE.md.
+
+services:
+  router:
+    build:
+      context: ./apps/router
+      args:
+        INSTALL_EXTRAS: "[bedrock]"
+    environment:
+      PROVIDER_MODE: bedrock
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      ROUTING_POLICY: ${ROUTING_POLICY:-failover}
+      ROUTING_PRIMARY: bedrock
+      ROUTING_FALLBACK: ${ROUTING_FALLBACK:-mock}
+      MODEL_MAP: ${MODEL_MAP:-gpt-proxy=bedrock:anthropic.claude-3-haiku-20240307-v1:0;mock-small=mock:mock-small}
+      # Bypass cache so verify proves a live provider call
+      CACHE_ENABLED: ${CACHE_ENABLED:-false}

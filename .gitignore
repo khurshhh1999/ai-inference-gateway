@@ -52,6 +52,10 @@ coverage/
 # Load-test ephemeral output (RESULTS.md is committed)
 load/summary.json
 
+# Live verify evidence (may contain request ids / previews — keep local)
+deploy/aws/evidence/*
+!deploy/aws/evidence/README.md
+
 # Planning / agent docs (local only — do not commit)
 plan.md
 AGENTS.md

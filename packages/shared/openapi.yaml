@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AI Inference Gateway
-  version: 0.12.0
+  version: 0.13.0
   description: |
     OpenAI-shaped edge for multi-cloud LLM routing with chat completions,
     model listing, embeddings, semantic cache, streaming, budgets, rate
@@ -132,6 +132,26 @@ paths:
             application/json:
               schema:
                 type: object
+                description: |
+                  OpenAI-shaped completion plus gateway fields `provider`,
+                  `route_reason`, and `cached` (used to prove live Bedrock vs mock).
+                properties:
+                  id:
+                    type: string
+                  provider:
+                    type: string
+                    description: Adapter name (mock | bedrock | vertex)
+                  route_reason:
+                    type: string
+                    nullable: true
+                  cached:
+                    type: boolean
+                  choices:
+                    type: array
+                    items:
+                      type: object
+                  usage:
+                    type: object
             text/event-stream:
               schema:
                 type: string

@@ -13,9 +13,10 @@ Internet → Cloud Run: gateway
                              └─▶ Vertex AI (same region / multi-region)
 ```
 
-Keep the router service **ingress restricted** (internal / load balancer only).
+Keep the router **ingress restricted** (internal / load balancer only).
 Expose only the gateway publicly. Attach a **Serverless VPC Access** connector
-so Cloud Run can reach Memorystore.
+so Cloud Run can reach Memorystore. The **gateway** also needs Redis for
+rate-limit buckets (see `REDIS_URL` / `RATE_LIMIT_*` in the sketch).
 
 ## Prerequisites
 

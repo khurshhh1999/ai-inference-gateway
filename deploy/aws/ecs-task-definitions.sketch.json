@@ -1,5 +1,5 @@
 {
-  "_comment": "Sketch only — replace ACCOUNT, REGION, secret ARNs, and Redis host before use.",
+  "_comment": "Live Bedrock path — replace ACCOUNT, REGION, secret ARNs, and Redis host before register-task-definition. See LIVE.md.",
   "gateway": {
     "family": "ai-inference-gateway",
     "networkMode": "awsvpc",
@@ -15,8 +15,15 @@
         "environment": [
           { "name": "PORT", "value": "8080" },
           { "name": "ROUTER_URL", "value": "http://router.internal:8081" },
+          { "name": "REDIS_URL", "value": "redis://elasticache.internal:6379/0" },
           { "name": "LOG_LEVEL", "value": "info" },
-          { "name": "MAX_BODY_BYTES", "value": "262144" }
+          { "name": "MAX_BODY_BYTES", "value": "262144" },
+          { "name": "RATE_LIMIT_ENABLED", "value": "true" },
+          { "name": "RATE_LIMIT_BACKEND", "value": "redis" },
+          { "name": "RATE_LIMIT_KEY_QPS", "value": "10" },
+          { "name": "RATE_LIMIT_KEY_BURST", "value": "20" },
+          { "name": "OTEL_ENABLED", "value": "true" },
+          { "name": "OTEL_SERVICE_NAME", "value": "gateway" }
         ],
         "secrets": [
           {
@@ -67,7 +74,10 @@
           { "name": "ROUTING_PRIMARY", "value": "bedrock" },
           { "name": "ROUTING_FALLBACK", "value": "mock" },
           { "name": "CACHE_ENABLED", "value": "true" },
+          { "name": "CACHE_INDEX_BACKEND", "value": "auto" },
           { "name": "BUDGET_ENABLED", "value": "true" },
+          { "name": "OTEL_ENABLED", "value": "true" },
+          { "name": "OTEL_SERVICE_NAME", "value": "router" },
           {
             "name": "MODEL_MAP",
             "value": "gpt-proxy=bedrock:anthropic.claude-3-haiku-20240307-v1:0;mock-small=mock:mock-small"

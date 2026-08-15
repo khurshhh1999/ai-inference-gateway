@@ -35,6 +35,8 @@ spec:
                   key: DEMO_API_KEY
             - name: REDIS_URL
               value: {{ .Values.gateway.redisUrl | quote }}
+            - name: MAX_BODY_BYTES
+              value: {{ .Values.gateway.maxBodyBytes | quote }}
             - name: RATE_LIMIT_ENABLED
               value: {{ .Values.gateway.rateLimitEnabled | quote }}
             - name: RATE_LIMIT_BACKEND
@@ -50,6 +52,14 @@ spec:
             {{- if .Values.gateway.rateLimitTenantBurst }}
             - name: RATE_LIMIT_TENANT_BURST
               value: {{ .Values.gateway.rateLimitTenantBurst | quote }}
+            {{- end }}
+            - name: OTEL_ENABLED
+              value: {{ .Values.gateway.otelEnabled | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.gateway.otelServiceName | quote }}
+            {{- if .Values.gateway.otelExporterOtlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.gateway.otelExporterOtlpEndpoint | quote }}
             {{- end }}
           readinessProbe:
             httpGet:

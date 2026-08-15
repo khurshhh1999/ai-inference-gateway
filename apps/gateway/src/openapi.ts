@@ -3,7 +3,7 @@ export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "AI Inference Gateway",
-    version: "0.12.0",
+    version: "0.13.0",
     description:
       "OpenAI-shaped edge for multi-cloud LLM routing: chat completions, model listing, embeddings, semantic cache, streaming, per-tenant budgets, rate limiting, tracing, and indexed vector lookup.",
   },
@@ -191,7 +191,7 @@ export const openApiDocument = {
         responses: {
           "200": {
             description:
-              "JSON completion, or SSE (`text/event-stream`) when stream=true. May include X-RateLimit-* headers.",
+              "JSON completion (includes provider, route_reason, cached), or SSE (`text/event-stream`) when stream=true. May include X-RateLimit-* headers.",
           },
           "400": { description: "Invalid request body" },
           "401": { description: "Missing or invalid API key" },

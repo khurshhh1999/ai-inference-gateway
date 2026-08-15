@@ -51,6 +51,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | Prometheus metrics + Grafana + k6 p95 evidence | Done |
 | OpenTelemetry traces + `X-Request-Id` correlation | Done |
 | Multi-cloud deploy sketches (AWS + GCP + Helm) | Done |
+| Live Bedrock path (Compose dry-run + ECS + Secrets Manager) | Done |
 
 ## Quick start
 
@@ -291,15 +292,35 @@ deploy/           # AWS / GCP / Helm sketches
 
 ## Deploy (AWS + GCP)
 
-Sketches live under [`deploy/`](deploy/) — not a turnkey production platform:
+Manifests and notes live under [`deploy/`](deploy/). **One path is live-ready**
+(ECS Fargate + Bedrock with Secrets Manager); GCP Cloud Run and Helm remain
+sketches / local demos. Default Compose and CI stay on `PROVIDER_MODE=mock`.
 
-| Path | Runtime | Provider focus |
-|------|---------|----------------|
-| [`deploy/aws/`](deploy/aws/) | ECS Fargate (+ EKS notes) | Bedrock + IAM least privilege |
-| [`deploy/gcp/`](deploy/gcp/) | Cloud Run (+ GKE notes) | Vertex AI + IAM least privilege |
-| [`deploy/helm/`](deploy/helm/) | kind / any Kubernetes | mock by default |
+| Path | Runtime | Provider focus | Status |
+|------|---------|----------------|--------|
+| [`deploy/aws/LIVE.md`](deploy/aws/LIVE.md) | Compose dry-run + ECS Fargate | Bedrock | **Live path** |
+| [`deploy/aws/`](deploy/aws/) | ECS Fargate (+ EKS notes) | Bedrock + IAM least privilege | Supporting |
+| [`deploy/gcp/`](deploy/gcp/) | Cloud Run (+ GKE notes) | Vertex AI + IAM least privilege | Sketch |
+| [`deploy/helm/`](deploy/helm/) | kind / any Kubernetes | mock by default | Local zero-cred |
 
-Build the router with cloud SDKs only when needed:
+### Live Bedrock (local dry-run)
+
+Requires AWS credentials with Bedrock model access. Builds the router with
+boto3 (`INSTALL_EXTRAS='[bedrock]'`) via the Compose overlay:
+
+```bash
+export AWS_REGION=us-east-1
+# Prefer AWS_PROFILE / SSO; or set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
+docker compose -f docker-compose.yml -f docker-compose.bedrock.yml up --build -d
+
+chmod +x scripts/verify_live_bedrock.sh
+./scripts/verify_live_bedrock.sh
+# Expect: PASS … provider=bedrock
+```
+
+ECS + Secrets Manager runbook: [`deploy/aws/LIVE.md`](deploy/aws/LIVE.md).
+
+Build cloud images only when needed:
 
 ```bash
 docker build --build-arg INSTALL_EXTRAS='[bedrock]' -t ai-router:bedrock ./apps/router

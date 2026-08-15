@@ -1,14 +1,17 @@
 # AWS deploy (Bedrock)
 
-Run the stack in **ECS Fargate** (primary sketch) with the router calling
-**Amazon Bedrock** in-region. EKS notes at the bottom if you prefer Kubernetes.
+**Live path:** follow [`LIVE.md`](LIVE.md) for Compose dry-run → Secrets Manager →
+ECS Fargate → `scripts/verify_live_bedrock.sh`. That is the recorded path that
+calls a real Bedrock model. Everything below is the supporting IAM / networking
+reference.
 
 ## Architecture
 
 ```
 ALB → ECS service: gateway
          │
-         └─▶ ECS service: router  ──▶ ElastiCache Redis
+         ├─▶ ElastiCache Redis   (rate-limit buckets)
+         └─▶ ECS service: router  ──▶ ElastiCache Redis (cache + budgets)
                         │
                         └─▶ Bedrock Runtime (same region)
 ```
@@ -21,7 +24,7 @@ Use a private subnet for router + Redis; put the gateway behind an ALB
 - AWS account with Bedrock model access enabled for your target models
 - ECR repositories for `ai-gateway` and `ai-router`
 - VPC with public + private subnets, NAT for Fargate pulls
-- ElastiCache Redis (or MemoryDB) reachable from the router task
+- ElastiCache Redis (or MemoryDB) reachable from **gateway and router** tasks
 
 ## Build & push
 
@@ -86,7 +89,8 @@ Important env for Bedrock:
 | `ROUTING_PRIMARY` | `bedrock` |
 | `ROUTING_FALLBACK` | `mock` (or `vertex,mock` if dual-cloud) |
 | `MODEL_MAP` | map logical models → Bedrock model ids |
-| `REDIS_URL` | `redis://your-elasticache:6379/0` |
+| `REDIS_URL` | `redis://your-elasticache:6379/0` (gateway **and** router) |
+| `RATE_LIMIT_*` | gateway token-bucket (see root `.env.example`) |
 
 With a task role, omit `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
 
@@ -94,6 +98,7 @@ With a task role, omit `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
 
 - [ ] Security group: ALB → gateway `:8080`
 - [ ] Security group: gateway → router `:8081`
+- [ ] Security group: gateway → Redis `:6379`
 - [ ] Security group: router → Redis `:6379`
 - [ ] Router egress to Bedrock Runtime (HTTPS) in-region
 - [ ] Health checks: gateway/router `GET /health`
@@ -115,10 +120,14 @@ Use the [Helm chart](../helm/) with:
 
 ## Verify
 
+Full runbook: [`LIVE.md`](LIVE.md). Short form:
+
 ```bash
-curl -s https://<alb-dns>/health
-curl -s https://<alb-dns>/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: <key>" \
-  -d '{"model":"gpt-proxy","messages":[{"role":"user","content":"hello from aws"}]}'
+export GATEWAY_URL="https://<alb-dns>"
+export DEMO_API_KEY="<key>"
+
+curl -sS "${GATEWAY_URL}/health"
+./scripts/verify_live_bedrock.sh
 ```
+
+Expect `"provider":"bedrock"` (not `mock`).
