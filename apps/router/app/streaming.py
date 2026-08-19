@@ -190,6 +190,78 @@ async def iter_sse_from_deltas(
     yield (format_sse("[DONE]"), accumulated)
 
 
+async def iter_sse_from_completion(
+    response: ChatCompletionResponse,
+    *,
+    chunk_words: bool = True,
+) -> AsyncIterator[str]:
+    """Yield OpenAI-shaped SSE for a finished completion (tool calls or text)."""
+    choice = response.choices[0]
+    message = choice.message
+    if message.tool_calls:
+        yield format_sse(
+            chunk_payload(
+                completion_id=response.id,
+                created=response.created,
+                model=response.model,
+                delta={"role": "assistant", "content": None},
+                provider=response.provider,
+                cached=response.cached,
+                route_reason=response.route_reason,
+            )
+        )
+        yield format_sse(
+            chunk_payload(
+                completion_id=response.id,
+                created=response.created,
+                model=response.model,
+                delta={
+                    "tool_calls": [
+                        {
+                            "index": i,
+                            "id": call.id,
+                            "type": call.type,
+                            "function": {
+                                "name": call.function.name,
+                                "arguments": call.function.arguments,
+                            },
+                        }
+                        for i, call in enumerate(message.tool_calls)
+                    ]
+                },
+                provider=response.provider,
+                cached=response.cached,
+                route_reason=response.route_reason,
+            )
+        )
+        yield format_sse(
+            chunk_payload(
+                completion_id=response.id,
+                created=response.created,
+                model=response.model,
+                delta={},
+                finish_reason=choice.finish_reason or "tool_calls",
+                provider=response.provider,
+                cached=response.cached,
+                route_reason=response.route_reason,
+            )
+        )
+        yield format_sse("[DONE]")
+        return
+
+    async for frame in iter_sse_from_text(
+        text=message.content or "",
+        model=response.model,
+        provider=response.provider,
+        completion_id=response.id,
+        created=response.created,
+        cached=response.cached,
+        route_reason=response.route_reason,
+        chunk_words=chunk_words,
+    ):
+        yield frame
+
+
 def build_completion_from_stream(
     *,
     completion_id: str,

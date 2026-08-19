@@ -16,7 +16,7 @@ def _rough_cost_usd(
     settings: Settings,
 ) -> float:
     """Policy-time cost hint from configured rates (not a billable meter)."""
-    prompt_tokens = max(1, sum(len(m.content.split()) for m in request.messages))
+    prompt_tokens = request.prompt_token_estimate()
     completion_tokens = request.max_tokens or 64
     in_rate = settings.cost_per_1k_input.get(provider_name, 0.0)
     out_rate = settings.cost_per_1k_output.get(provider_name, 0.0)

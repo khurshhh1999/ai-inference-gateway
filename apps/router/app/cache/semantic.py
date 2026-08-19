@@ -268,9 +268,19 @@ def prompt_from_messages(messages: list[Any]) -> str:
     parts: list[str] = []
     for msg in messages:
         role = getattr(msg, "role", None) or (msg.get("role") if isinstance(msg, dict) else "")
-        content = getattr(msg, "content", None) or (
-            msg.get("content") if isinstance(msg, dict) else ""
-        )
+        if hasattr(msg, "text"):
+            content = msg.text()
+        else:
+            content = getattr(msg, "content", None) or (
+                msg.get("content") if isinstance(msg, dict) else ""
+            )
+            if content is None:
+                content = ""
+            calls = getattr(msg, "tool_calls", None)
+            if calls is None and isinstance(msg, dict):
+                calls = msg.get("tool_calls")
+            if calls:
+                content = f"{content} {calls}".strip()
         parts.append(f"{role}: {content}")
     return "\n".join(parts)
 

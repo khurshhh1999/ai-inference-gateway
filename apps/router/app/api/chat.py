@@ -26,6 +26,7 @@ from app.models import ChatCompletionRequest, ChatCompletionResponse
 from app.providers import get_routing_engine
 from app.streaming import (
     build_completion_from_stream,
+    iter_sse_from_completion,
     iter_sse_from_deltas,
     iter_sse_from_text,
 )
@@ -102,6 +103,7 @@ async def chat_completions(
 
     cached = False
     status = 200
+    cacheable = not bypass and not body.is_tool_request()
     with tracer.start_as_current_span(
         "router.chat.completions",
         attributes={
@@ -110,10 +112,11 @@ async def chat_completions(
             "llm.model": body.model,
             "llm.stream": False,
             "cache.bypass": bypass,
+            "llm.tools": bool(body.tools),
         },
     ) as span:
         try:
-            if not bypass:
+            if cacheable:
                 with tracer.start_as_current_span("cache.lookup") as cache_span:
                     try:
                         hit = await cache.lookup(
@@ -174,7 +177,7 @@ async def chat_completions(
                 prompt=prompt,
                 response=completion,
                 provider=decision.provider,
-                bypass=bypass,
+                bypass=bypass or body.is_tool_request(),
             )
             set_span_ok(span)
             return completion
@@ -211,10 +214,12 @@ async def _stream_completions(
             "llm.model": body.model,
             "llm.stream": True,
             "cache.bypass": bypass,
+            "llm.tools": bool(body.tools),
         },
     ) as span:
         try:
-            if not bypass:
+            cacheable = not bypass and not body.is_tool_request()
+            if cacheable:
                 with tracer.start_as_current_span("cache.lookup") as cache_span:
                     try:
                         hit = await cache.lookup(
@@ -236,7 +241,7 @@ async def _stream_completions(
 
                         async def _cached_events() -> AsyncIterator[str]:
                             async for frame in iter_sse_from_text(
-                                text=cached.choices[0].message.content,
+                                text=cached.choices[0].message.content or "",
                                 model=cached.model,
                                 provider=cached.provider,
                                 completion_id=cached.id,
@@ -272,6 +277,55 @@ async def _stream_completions(
                 budget_span.set_attribute("budget.soft_warning", check.soft_warning)
 
             engine = get_routing_engine()
+            if body.is_tool_request():
+                # Synthesize OpenAI-shaped SSE from a full completion so adapters
+                # do not need tool-argument delta parsers.
+                try:
+                    decision = await engine.complete(body)
+                except AllProvidersFailedError as exc:
+                    status = 502
+                    logger.error(
+                        "all providers failed attempts=%s stream=1 tools=1 request_id=%s",
+                        exc.attempts,
+                        request_id,
+                    )
+                    set_span_error(span, exc)
+                    raise _all_providers_failed_http(exc) from exc
+
+                span.set_attribute("llm.provider", decision.provider)
+                span.set_attribute("route.reason", decision.reason)
+
+                async def _tool_events() -> AsyncIterator[str]:
+                    completed = False
+                    async for frame in iter_sse_from_completion(decision.response):
+                        if await request.is_disconnected():
+                            logger.info(
+                                "client disconnected mid-stream provider=%s request_id=%s",
+                                decision.provider,
+                                request_id,
+                            )
+                            break
+                        yield frame
+                        if "[DONE]" in frame:
+                            completed = True
+                    if completed:
+                        await _meter_completion(
+                            tenant=tenant,
+                            model=body.model,
+                            response=decision.response,
+                            provider=decision.provider,
+                        )
+
+                headers = _sse_headers(request_id)
+                if check.soft_warning:
+                    headers["X-Budget-Warning"] = "soft"
+                set_span_ok(span)
+                return StreamingResponse(
+                    _tool_events(),
+                    media_type="text/event-stream",
+                    headers=headers,
+                )
+
             try:
                 route = await engine.open_stream(body)
             except AllProvidersFailedError as exc:
@@ -314,9 +368,7 @@ async def _stream_completions(
                     await route.aclose()
 
                 if completed and accumulated:
-                    prompt_tokens = max(
-                        1, sum(len(m.content.split()) for m in body.messages)
-                    )
+                    prompt_tokens = body.prompt_token_estimate()
                     completion = build_completion_from_stream(
                         completion_id=route.completion_id,
                         created=route.created,
@@ -332,7 +384,7 @@ async def _stream_completions(
                         response=completion,
                         provider=route.provider,
                     )
-                    if not bypass:
+                    if not bypass and not body.is_tool_request():
                         await _maybe_store_cache(
                             tenant=tenant,
                             model=body.model,
@@ -414,6 +466,11 @@ async def _maybe_store_cache(
     bypass: bool,
 ) -> None:
     if bypass:
+        return
+    finish = response.choices[0].finish_reason if response.choices else "stop"
+    if finish == "tool_calls" or (
+        response.choices and response.choices[0].message.tool_calls
+    ):
         return
     cache = get_semantic_cache()
     cost_usd = estimate_response_cost_usd(

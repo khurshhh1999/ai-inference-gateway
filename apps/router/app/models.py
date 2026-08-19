@@ -1,13 +1,76 @@
-from typing import Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-Role = Literal["system", "user", "assistant"]
+Role = Literal["system", "user", "assistant", "tool"]
+
+
+class FunctionDef(BaseModel):
+    name: str = Field(min_length=1)
+    description: str | None = None
+    parameters: dict[str, Any] | None = None
+
+
+class ToolSpec(BaseModel):
+    type: Literal["function"] = "function"
+    function: FunctionDef
+
+
+class FunctionNameOnly(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class ToolChoiceNamed(BaseModel):
+    type: Literal["function"] = "function"
+    function: FunctionNameOnly
+
+
+class FunctionCallBody(BaseModel):
+    name: str
+    arguments: str = "{}"
+
+
+class ToolCall(BaseModel):
+    id: str
+    type: Literal["function"] = "function"
+    function: FunctionCallBody
 
 
 class ChatMessage(BaseModel):
     role: Role
-    content: str
+    content: str | None = None
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+    @model_validator(mode="after")
+    def _role_payload(self) -> Self:
+        if self.role == "tool":
+            if not self.tool_call_id:
+                raise ValueError("tool messages require tool_call_id")
+            if self.content is None:
+                raise ValueError("tool messages require content")
+            return self
+        if self.role in {"system", "user"}:
+            if self.content is None:
+                raise ValueError(f"{self.role} message requires content")
+            return self
+        if not self.tool_calls and self.content is None:
+            raise ValueError("assistant message requires content or tool_calls")
+        return self
+
+    def text(self) -> str:
+        """Plain text used for token estimates / cache embeddings."""
+        parts: list[str] = []
+        if self.content:
+            parts.append(self.content)
+        if self.tool_calls:
+            for call in self.tool_calls:
+                parts.append(call.function.name)
+                parts.append(call.function.arguments)
+        if self.role == "tool" and self.tool_call_id:
+            parts.append(self.tool_call_id)
+        return " ".join(parts)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -16,11 +79,23 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
     temperature: float | None = Field(default=None, ge=0, le=2)
+    tools: list[ToolSpec] | None = None
+    tool_choice: Literal["none", "auto", "required"] | ToolChoiceNamed | None = None
+
+    def prompt_token_estimate(self) -> int:
+        total = sum(len(message.text().split()) for message in self.messages)
+        return max(1, total)
+
+    def is_tool_request(self) -> bool:
+        if self.tools:
+            return True
+        return any(m.role == "tool" or m.tool_calls for m in self.messages)
 
 
 class ChatChoiceMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
-    content: str
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class ChatChoice(BaseModel):
