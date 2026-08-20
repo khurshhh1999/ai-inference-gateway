@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: AI Inference Gateway
-  version: 0.13.0
+  version: 0.14.0
   description: |
-    OpenAI-shaped edge for multi-cloud LLM routing with chat completions,
-    model listing, embeddings, semantic cache, streaming, budgets, rate
-    limiting, tracing, adaptive routing, and indexed vector lookup.
+    OpenAI-shaped edge for multi-cloud LLM routing with chat completions
+    (including tool / function calling), model listing, embeddings, semantic
+    cache, streaming, budgets, rate limiting, tracing, adaptive routing, and
+    indexed vector lookup.
 servers:
   - url: http://localhost:18080
 paths:
@@ -125,6 +126,8 @@ paths:
             JSON completion when `stream` is false/omitted.
             When `stream` is true, OpenAI-shaped SSE (`text/event-stream`) with
             `chat.completion.chunk` events ending in `data: [DONE]`.
+            Tool calls use OpenAI `tools` / `tool_choice`; `finish_reason` may
+            be `tool_calls` and assistant messages may include `tool_calls`.
             Soft budget warnings may include header `X-Budget-Warning: soft`.
             Rate-limited responses include `X-RateLimit-*` and may include `Retry-After`.
             Every response includes `X-Request-Id` for log/trace correlation.

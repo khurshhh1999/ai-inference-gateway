@@ -44,6 +44,8 @@ spec:
               value: {{ .Values.router.cacheEmbeddingProvider | quote }}
             - name: CACHE_ANN_TOP_K
               value: {{ .Values.router.cacheAnnTopK | quote }}
+            - name: CACHE_ANN_EF_RUNTIME
+              value: {{ .Values.router.cacheAnnEfRuntime | quote }}
             - name: BUDGET_ENABLED
               value: {{ .Values.router.budgetEnabled | quote }}
             - name: ADAPTIVE_EWMA_ALPHA

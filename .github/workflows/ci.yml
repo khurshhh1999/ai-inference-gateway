@@ -120,6 +120,15 @@ jobs:
             -o /tmp/embeddings.json
           grep -q '"object": "list"' /tmp/embeddings.json || grep -q '"object":"list"' /tmp/embeddings.json
           grep -q 'embedding' /tmp/embeddings.json
+          # OpenAI-shaped tool calling (mock)
+          curl -sS http://127.0.0.1:18080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -H 'X-API-Key: demo-key-change-me' \
+            -H 'X-Request-Id: ci-smoke-tools-001' \
+            -d '{"model":"mock-small","messages":[{"role":"user","content":"Call get_weather for Boston"}],"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}}]}' \
+            -o /tmp/tools.json
+          grep -q 'tool_calls' /tmp/tools.json
+          grep -q 'get_weather' /tmp/tools.json
       - name: Tear down
         if: always()
         run: docker compose down -v

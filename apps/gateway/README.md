@@ -1,7 +1,8 @@
 # AI Inference Gateway (edge)
 
 TypeScript Fastify edge that authenticates callers and proxies OpenAI-shaped
-routes (chat completions, models, embeddings) to the FastAPI router.
+routes (chat completions including tool / function calling, models, embeddings)
+to the FastAPI router.
 
 - Auth: `X-API-Key` (timing-safe) or `Authorization: Bearer <key>` → tenant via
   `TENANT_API_KEYS`

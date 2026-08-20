@@ -34,12 +34,22 @@ import {
   withSpanContext,
 } from "./tracing.js";
 
+type ChatMessage = {
+  role: string;
+  content?: string | null;
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: unknown[];
+};
+
 type ChatBody = {
   model: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: ChatMessage[];
   stream?: boolean;
   max_tokens?: number;
   temperature?: number;
+  tools?: unknown[];
+  tool_choice?: unknown;
 };
 
 type EmbeddingsBody = {

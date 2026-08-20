@@ -19,6 +19,14 @@ owns semantic caching (scan or HNSW-indexed), and enforces per-tenant USD/token 
 Responses include `provider` and `route_reason` (`cost` / `latency` / `affinity` /
 `failover` / `adaptive`). Route decisions are also logged.
 
+## Tool / function calling
+
+`POST /v1/chat/completions` accepts OpenAI-shaped `tools` and `tool_choice`.
+The mock adapter emits `finish_reason=tool_calls` when a tool is selected;
+send the result back as `role: tool`. Bedrock maps to Claude `tool_use` /
+`tool_result`; Vertex maps to Gemini function declarations. Tool-calling
+turns are skipped by the semantic cache.
+
 ## Embeddings
 
 `POST /v1/embeddings` is OpenAI-shaped (`model` + `input` string or list).

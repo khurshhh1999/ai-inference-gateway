@@ -40,6 +40,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | Feature | Status |
 |---------|--------|
 | OpenAI-shaped `POST /v1/chat/completions` | Done |
+| OpenAI-shaped tool / function calling on chat | Done |
 | OpenAI-shaped `GET /v1/models` + `POST /v1/embeddings` | Done |
 | Mock provider for local / CI (no cloud keys) | Done |
 | Multi-provider routing (Bedrock + Vertex) + failover | Done |
@@ -97,6 +98,43 @@ curl -s http://localhost:18080/v1/chat/completions \
 ```
 
 Auth is `X-API-Key` or OpenAI-style `Authorization: Bearer <key>` (same secret).
+
+### Tool / function calling
+
+Chat completions accept OpenAI-shaped `tools` and `tool_choice`. The mock
+provider calls a tool when `tool_choice` is `required` / a named function, or
+when `auto` (default) sees the function name in the last user message. Send the
+tool result back as a `role: tool` message to get a final assistant reply.
+Bedrock (Claude `tool_use`) and Vertex (Gemini function calling) receive the
+same payload when those adapters are selected.
+
+Tool-calling turns are **not** written to the semantic cache (a near-duplicate
+prompt should not replay a function call).
+
+```bash
+curl -s http://localhost:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: demo-key-change-me" \
+  -d '{
+    "model": "mock-small",
+    "messages": [{"role": "user", "content": "What is the weather in Boston? Use get_weather."}],
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Look up weather for a city",
+        "parameters": {
+          "type": "object",
+          "properties": {"location": {"type": "string"}},
+          "required": ["location"]
+        }
+      }
+    }]
+  }' | jq '.choices[0] | {finish_reason, tool_calls: .message.tool_calls}'
+
+chmod +x scripts/demo_tools.sh
+./scripts/demo_tools.sh
+```
 
 ### Models and embeddings
 
@@ -409,8 +447,8 @@ npm run dev
 ```
 
 CI (GitHub Actions) runs router lint + unit tests, gateway unit + build, and a
-Docker Compose smoke (health, chat completion, models, embeddings, `/metrics`,
-OpenAPI).
+Docker Compose smoke (health, chat completion, tool calling, models, embeddings,
+`/metrics`, OpenAPI).
 
 ## License
 

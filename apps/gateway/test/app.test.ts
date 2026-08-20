@@ -126,6 +126,68 @@ describe("gateway", () => {
     assert.equal(res.json().choices[0].message.content, "hello");
   });
 
+  it("forwards tools and tool_choice to the router", async () => {
+    let sawBody: {
+      tools?: unknown[];
+      tool_choice?: unknown;
+      messages?: Array<{ role: string }>;
+    } | null = null;
+    globalThis.fetch = (async (_input, init) => {
+      sawBody = JSON.parse(String(init?.body ?? "{}")) as typeof sawBody;
+      return new Response(
+        JSON.stringify({
+          id: "c1",
+          object: "chat.completion",
+          created: 1,
+          model: "mock-small",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "get_weather", arguments: '{"location":"Boston"}' },
+                  },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          provider: "mock",
+          cached: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { "x-api-key": "demo-key-change-me" },
+      payload: {
+        model: "mock-small",
+        messages: [{ role: "user", content: "weather in Boston" }],
+        tools: [
+          {
+            type: "function",
+            function: { name: "get_weather", description: "weather lookup" },
+          },
+        ],
+        tool_choice: "auto",
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().choices[0].finish_reason, "tool_calls");
+    assert.ok(sawBody?.tools);
+    assert.equal(sawBody?.tool_choice, "auto");
+  });
+
   it("forwards tenant from API key map (ignores client X-Tenant-Id)", async () => {
     let sawTenant: string | null = null;
     globalThis.fetch = (async (_input, init) => {

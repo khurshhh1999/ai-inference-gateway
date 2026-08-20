@@ -3,9 +3,9 @@ export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "AI Inference Gateway",
-    version: "0.13.0",
+    version: "0.14.0",
     description:
-      "OpenAI-shaped edge for multi-cloud LLM routing: chat completions, model listing, embeddings, semantic cache, streaming, per-tenant budgets, rate limiting, tracing, and indexed vector lookup.",
+      "OpenAI-shaped edge for multi-cloud LLM routing: chat completions (including tool / function calling), model listing, embeddings, semantic cache, streaming, per-tenant budgets, rate limiting, tracing, and indexed vector lookup.",
   },
   servers: [{ url: "http://localhost:18080" }],
   paths: {
@@ -170,19 +170,24 @@ export const openApiDocument = {
                     minItems: 1,
                     items: {
                       type: "object",
-                      required: ["role", "content"],
+                      required: ["role"],
                       properties: {
                         role: {
                           type: "string",
-                          enum: ["system", "user", "assistant"],
+                          enum: ["system", "user", "assistant", "tool"],
                         },
-                        content: { type: "string" },
+                        content: { type: ["string", "null"] },
+                        name: { type: "string" },
+                        tool_call_id: { type: "string" },
+                        tool_calls: { type: "array" },
                       },
                     },
                   },
                   stream: { type: "boolean", default: false },
                   max_tokens: { type: "integer", minimum: 1, maximum: 8192 },
                   temperature: { type: "number", minimum: 0, maximum: 2 },
+                  tools: { type: "array" },
+                  tool_choice: {},
                 },
               },
             },
@@ -191,7 +196,7 @@ export const openApiDocument = {
         responses: {
           "200": {
             description:
-              "JSON completion (includes provider, route_reason, cached), or SSE (`text/event-stream`) when stream=true. May include X-RateLimit-* headers.",
+              "JSON completion (includes provider, route_reason, cached), or SSE (`text/event-stream`) when stream=true. Tool calls use OpenAI tools/tool_choice. May include X-RateLimit-* headers.",
           },
           "400": { description: "Invalid request body" },
           "401": { description: "Missing or invalid API key" },
