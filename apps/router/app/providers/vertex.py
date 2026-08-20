@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -13,6 +14,9 @@ from app.models import (
     ChatChoiceMessage,
     ChatCompletionRequest,
     ChatCompletionResponse,
+    FunctionCallBody,
+    ToolCall,
+    ToolChoiceNamed,
     Usage,
 )
 from app.providers.base import CostEstimate, Provider
@@ -97,6 +101,7 @@ class VertexProvider(Provider):
                 generation["temperature"] = request.temperature
             if generation:
                 kwargs["generation_config"] = generation
+            kwargs.update(_vertex_tool_kwargs(request))
             return model.generate_content(prompt, **kwargs)
 
         try:
@@ -127,6 +132,7 @@ class VertexProvider(Provider):
                 generation["temperature"] = request.temperature
             if generation:
                 kwargs["generation_config"] = generation
+            kwargs.update(_vertex_tool_kwargs(request))
             return model.generate_content(prompt, **kwargs)
 
         try:
@@ -149,7 +155,7 @@ class VertexProvider(Provider):
                 yield text
 
     def estimate_cost(self, request: ChatCompletionRequest) -> CostEstimate:
-        prompt_tokens = max(1, sum(len(m.content.split()) for m in request.messages))
+        prompt_tokens = request.prompt_token_estimate()
         completion_tokens = request.max_tokens or 64
         in_rate = settings.cost_per_1k_input.get(self.name, 0.000075)
         out_rate = settings.cost_per_1k_output.get(self.name, 0.0003)
@@ -173,7 +179,20 @@ class VertexProvider(Provider):
     def _format_prompt(request: ChatCompletionRequest) -> str:
         parts: list[str] = []
         for message in request.messages:
-            parts.append(f"{message.role}: {message.content}")
+            text = message.content or ""
+            if message.tool_calls:
+                dumped = [
+                    {
+                        "id": call.id,
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    }
+                    for call in message.tool_calls
+                ]
+                text = f"{text} tool_calls={dumped}".strip()
+            if message.role == "tool":
+                text = f"[tool_result {message.tool_call_id}] {text}"
+            parts.append(f"{message.role}: {text}")
         return "\n".join(parts)
 
     def _parse_response(
@@ -191,10 +210,15 @@ class VertexProvider(Provider):
         else:
             content = str(result)
 
+        tool_calls = _vertex_tool_calls(result)
+        if tool_calls and not content:
+            content = None
+
         usage_meta = getattr(result, "usage_metadata", None)
         prompt_tokens = int(getattr(usage_meta, "prompt_token_count", None) or 1)
         completion_tokens = int(
-            getattr(usage_meta, "candidates_token_count", None) or max(1, len(content.split()))
+            getattr(usage_meta, "candidates_token_count", None)
+            or max(1, len((content or "").split()))
         )
 
         logger.debug("vertex complete model=%s physical=%s", logical_model, physical)
@@ -202,7 +226,15 @@ class VertexProvider(Provider):
             id=f"chatcmpl-vertex-{uuid.uuid4().hex[:12]}",
             created=int(time.time()),
             model=logical_model,
-            choices=[ChatChoice(message=ChatChoiceMessage(content=content))],
+            choices=[
+                ChatChoice(
+                    message=ChatChoiceMessage(
+                        content=content,
+                        tool_calls=tool_calls or None,
+                    ),
+                    finish_reason="tool_calls" if tool_calls else "stop",
+                )
+            ],
             usage=Usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
@@ -211,3 +243,93 @@ class VertexProvider(Provider):
             provider=self.name,
             cached=False,
         )
+
+
+def _vertex_tool_kwargs(request: ChatCompletionRequest) -> dict[str, Any]:
+    if not request.tools:
+        return {}
+    declarations = [
+        {
+            "name": tool.function.name,
+            "description": tool.function.description or "",
+            "parameters": tool.function.parameters or {"type": "object", "properties": {}},
+        }
+        for tool in request.tools
+    ]
+    tools: Any
+    try:
+        from vertexai.generative_models import (  # type: ignore[import-untyped]
+            FunctionDeclaration,
+            Tool,
+        )
+
+        tools = [
+            Tool(
+                function_declarations=[
+                    FunctionDeclaration(
+                        name=item["name"],
+                        description=item["description"],
+                        parameters=item["parameters"],
+                    )
+                    for item in declarations
+                ]
+            )
+        ]
+    except ImportError:
+        tools = [{"function_declarations": declarations}]
+    kwargs: dict[str, Any] = {"tools": tools}
+    mode = "AUTO"
+    if request.tool_choice == "none":
+        mode = "NONE"
+    elif request.tool_choice == "required":
+        mode = "ANY"
+    elif isinstance(request.tool_choice, ToolChoiceNamed):
+        kwargs["tool_config"] = {
+            "function_calling_config": {
+                "mode": "ANY",
+                "allowed_function_names": [request.tool_choice.function.name],
+            }
+        }
+        return kwargs
+    kwargs["tool_config"] = {"function_calling_config": {"mode": mode}}
+    return kwargs
+
+
+def _vertex_tool_calls(result: Any) -> list[ToolCall]:
+    found: list[Any] = []
+    direct = getattr(result, "function_calls", None)
+    if direct:
+        found.extend(list(direct))
+    candidates = getattr(result, "candidates", None) or []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            call = getattr(part, "function_call", None)
+            if call is not None:
+                found.append(call)
+    calls: list[ToolCall] = []
+    for raw in found:
+        if isinstance(raw, dict):
+            name = str(raw.get("name") or "unknown")
+            args: Any = raw.get("args") or raw.get("arguments") or {}
+        else:
+            name = str(getattr(raw, "name", None) or "unknown")
+            args = getattr(raw, "args", None)
+        if args is None:
+            args = {}
+        if hasattr(args, "items") and not isinstance(args, dict):
+            try:
+                args = dict(args)
+            except Exception:  # noqa: BLE001
+                args = {"raw": str(args)}
+        calls.append(
+            ToolCall(
+                id=f"call_{uuid.uuid4().hex[:10]}",
+                function=FunctionCallBody(
+                    name=name or "unknown",
+                    arguments=json.dumps(args) if not isinstance(args, str) else args,
+                ),
+            )
+        )
+    return calls

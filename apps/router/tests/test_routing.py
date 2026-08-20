@@ -9,7 +9,13 @@ import pytest
 
 from app.config import Settings
 from app.errors import AllProvidersFailedError, ProviderError
-from app.models import ChatCompletionRequest, ChatMessage
+from app.models import (
+    ChatCompletionRequest,
+    ChatMessage,
+    FunctionDef,
+    ToolChoiceNamed,
+    ToolSpec,
+)
 from app.providers.bedrock import BedrockProvider
 from app.providers.circuit_breaker import CircuitBreaker, CircuitState
 from app.providers.mock import MockProvider
@@ -251,3 +257,129 @@ def test_model_map_resolution() -> None:
     )
     assert settings.resolve_physical_model("gpt-proxy", "vertex") == "gemini-1.5-flash"
     assert settings.resolve_physical_model("unknown", "mock") == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_bedrock_forwards_tools_and_parses_tool_use() -> None:
+    class FakeBody:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "stop_reason": "tool_use",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_123",
+                            "name": "get_weather",
+                            "input": {"location": "Boston"},
+                        }
+                    ],
+                    "usage": {"input_tokens": 8, "output_tokens": 4},
+                }
+            ).encode("utf-8")
+
+    captured: dict[str, Any] = {}
+
+    class FakeClient:
+        def invoke_model(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(json.loads(kwargs["body"]))
+            return {"body": FakeBody()}
+
+    request = ChatCompletionRequest(
+        model="gpt-proxy",
+        messages=[ChatMessage(role="user", content="weather in Boston")],
+        tools=[
+            ToolSpec(
+                function=FunctionDef(
+                    name="get_weather",
+                    description="weather",
+                    parameters={"type": "object", "properties": {"location": {"type": "string"}}},
+                )
+            )
+        ],
+        tool_choice="required",
+    )
+    provider = BedrockProvider(client=FakeClient())
+    result = await provider.complete(request)
+    assert captured["tools"][0]["name"] == "get_weather"
+    assert captured["tool_choice"] == {"type": "any"}
+    assert result.choices[0].finish_reason == "tool_calls"
+    assert result.choices[0].message.tool_calls is not None
+    assert result.choices[0].message.tool_calls[0].function.name == "get_weather"
+    assert "Boston" in result.choices[0].message.tool_calls[0].function.arguments
+
+
+@pytest.mark.asyncio
+async def test_bedrock_maps_tool_results_to_anthropic_user_blocks() -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeBody:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "content": [{"type": "text", "text": "72F and sunny"}],
+                    "usage": {"input_tokens": 10, "output_tokens": 3},
+                }
+            ).encode("utf-8")
+
+    class FakeClient:
+        def invoke_model(self, **kwargs: Any) -> dict[str, Any]:
+            captured.update(json.loads(kwargs["body"]))
+            return {"body": FakeBody()}
+
+    request = ChatCompletionRequest(
+        model="gpt-proxy",
+        messages=[
+            ChatMessage(role="user", content="weather?"),
+            ChatMessage(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"location":"Boston"}'},
+                    }
+                ],
+            ),
+            ChatMessage(role="tool", tool_call_id="call_1", content='{"temp":72}'),
+        ],
+        tools=[ToolSpec(function=FunctionDef(name="get_weather"))],
+    )
+    provider = BedrockProvider(client=FakeClient())
+    result = await provider.complete(request)
+    assert result.choices[0].message.content == "72F and sunny"
+    roles = [m["role"] for m in captured["messages"]]
+    assert roles[-1] == "user"
+    assert captured["messages"][-1]["content"][0]["type"] == "tool_result"
+    assert captured["messages"][-1]["content"][0]["tool_use_id"] == "call_1"
+
+
+@pytest.mark.asyncio
+async def test_vertex_forwards_tools_and_parses_function_call() -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeModel:
+        def generate_content(self, contents: str, **kwargs: Any) -> Any:
+            captured["contents"] = contents
+            captured["kwargs"] = kwargs
+            return SimpleNamespace(
+                text="",
+                function_calls=[SimpleNamespace(name="get_weather", args={"location": "Oslo"})],
+                usage_metadata=SimpleNamespace(prompt_token_count=6, candidates_token_count=2),
+            )
+
+    request = ChatCompletionRequest(
+        model="gpt-proxy",
+        messages=[ChatMessage(role="user", content="get_weather Oslo")],
+        tools=[ToolSpec(function=FunctionDef(name="get_weather", description="weather"))],
+        tool_choice=ToolChoiceNamed(function={"name": "get_weather"}),
+    )
+    provider = VertexProvider(model_factory=lambda _name: FakeModel())
+    result = await provider.complete(request)
+    assert "tools" in captured["kwargs"]
+    assert captured["kwargs"]["tool_config"]["function_calling_config"]["mode"] == "ANY"
+    assert result.choices[0].finish_reason == "tool_calls"
+    assert result.choices[0].message.tool_calls is not None
+    assert result.choices[0].message.tool_calls[0].function.name == "get_weather"
+    assert "Oslo" in result.choices[0].message.tool_calls[0].function.arguments

@@ -14,6 +14,9 @@ from app.models import (
     ChatChoiceMessage,
     ChatCompletionRequest,
     ChatCompletionResponse,
+    FunctionCallBody,
+    ToolCall,
+    ToolChoiceNamed,
     Usage,
 )
 from app.providers.base import CostEstimate, Provider
@@ -121,7 +124,7 @@ class BedrockProvider(Provider):
                 yield delta
 
     def estimate_cost(self, request: ChatCompletionRequest) -> CostEstimate:
-        prompt_tokens = max(1, sum(len(m.content.split()) for m in request.messages))
+        prompt_tokens = request.prompt_token_estimate()
         completion_tokens = request.max_tokens or 64
         in_rate = settings.cost_per_1k_input.get(self.name, 0.00025)
         out_rate = settings.cost_per_1k_output.get(self.name, 0.00125)
@@ -140,12 +143,7 @@ class BedrockProvider(Provider):
     @staticmethod
     def _build_body(request: ChatCompletionRequest, _physical: str) -> dict[str, Any]:
         # Anthropic Messages-style payload used by Claude on Bedrock.
-        system_parts = [m.content for m in request.messages if m.role == "system"]
-        messages = [
-            {"role": m.role, "content": m.content}
-            for m in request.messages
-            if m.role in {"user", "assistant"}
-        ]
+        system_parts, messages = _anthropic_messages(request)
         body: dict[str, Any] = {
             "anthropic_version": "bedrock-2023-05-31",
             "messages": messages or [{"role": "user", "content": ""}],
@@ -155,6 +153,17 @@ class BedrockProvider(Provider):
             body["system"] = "\n".join(system_parts)
         if request.temperature is not None:
             body["temperature"] = request.temperature
+        if request.tools:
+            body["tools"] = [
+                {
+                    "name": tool.function.name,
+                    "description": tool.function.description or "",
+                    "input_schema": tool.function.parameters
+                    or {"type": "object", "properties": {}},
+                }
+                for tool in request.tools
+            ]
+            body["tool_choice"] = _bedrock_tool_choice(request.tool_choice)
         return body
 
     @staticmethod
@@ -211,16 +220,37 @@ class BedrockProvider(Provider):
             data = raw
 
         content_blocks = data.get("content") or []
-        text_parts = [
-            block.get("text", "")
-            for block in content_blocks
-            if isinstance(block, dict) and block.get("type", "text") == "text"
-        ]
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        for block in content_blocks:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type", "text")
+            if block_type == "text":
+                text_parts.append(str(block.get("text") or ""))
+            elif block_type == "tool_use":
+                raw_input = block.get("input") or {}
+                tool_calls.append(
+                    ToolCall(
+                        id=str(block.get("id") or f"call_{uuid.uuid4().hex[:10]}"),
+                        function=FunctionCallBody(
+                            name=str(block.get("name") or "unknown"),
+                            arguments=json.dumps(raw_input),
+                        ),
+                    )
+                )
         content = "".join(text_parts) or data.get("completion") or data.get("outputText") or ""
+        if tool_calls and not content:
+            content = None
+        finish_reason = "tool_calls" if tool_calls else "stop"
+        if data.get("stop_reason") == "tool_use":
+            finish_reason = "tool_calls"
         usage_raw = data.get("usage") or {}
         prompt_tokens = int(usage_raw.get("input_tokens") or usage_raw.get("prompt_tokens") or 1)
         completion_tokens = int(
-            usage_raw.get("output_tokens") or usage_raw.get("completion_tokens") or max(1, len(content.split()))
+            usage_raw.get("output_tokens")
+            or usage_raw.get("completion_tokens")
+            or max(1, len((content or "").split()) + sum(len(c.function.arguments.split()) for c in tool_calls))
         )
 
         logger.debug("bedrock complete model=%s physical=%s", logical_model, physical)
@@ -228,7 +258,15 @@ class BedrockProvider(Provider):
             id=f"chatcmpl-bedrock-{uuid.uuid4().hex[:12]}",
             created=int(time.time()),
             model=logical_model,
-            choices=[ChatChoice(message=ChatChoiceMessage(content=content))],
+            choices=[
+                ChatChoice(
+                    message=ChatChoiceMessage(
+                        content=content,
+                        tool_calls=tool_calls or None,
+                    ),
+                    finish_reason=finish_reason,
+                )
+            ],
             usage=Usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
@@ -237,3 +275,66 @@ class BedrockProvider(Provider):
             provider=self.name,
             cached=False,
         )
+
+
+def _bedrock_tool_choice(choice: str | ToolChoiceNamed | None) -> dict[str, Any]:
+    if choice is None or choice == "auto":
+        return {"type": "auto"}
+    if choice == "none":
+        return {"type": "none"}
+    if choice == "required":
+        return {"type": "any"}
+    if isinstance(choice, ToolChoiceNamed):
+        return {"type": "tool", "name": choice.function.name}
+    return {"type": "auto"}
+
+
+def _anthropic_messages(request: ChatCompletionRequest) -> tuple[list[str], list[dict[str, Any]]]:
+    system_parts: list[str] = []
+    messages: list[dict[str, Any]] = []
+    for message in request.messages:
+        if message.role == "system":
+            system_parts.append(message.content or "")
+            continue
+        if message.role == "user":
+            messages.append({"role": "user", "content": message.content or ""})
+            continue
+        if message.role == "assistant":
+            if message.tool_calls:
+                blocks: list[dict[str, Any]] = []
+                if message.content:
+                    blocks.append({"type": "text", "text": message.content})
+                for call in message.tool_calls:
+                    try:
+                        parsed = json.loads(call.function.arguments or "{}")
+                    except json.JSONDecodeError:
+                        parsed = {"raw": call.function.arguments}
+                    if not isinstance(parsed, dict):
+                        parsed = {"value": parsed}
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": call.id,
+                            "name": call.function.name,
+                            "input": parsed,
+                        }
+                    )
+                messages.append({"role": "assistant", "content": blocks})
+            else:
+                messages.append({"role": "assistant", "content": message.content or ""})
+            continue
+        if message.role == "tool":
+            block = {
+                "type": "tool_result",
+                "tool_use_id": message.tool_call_id,
+                "content": message.content or "",
+            }
+            if (
+                messages
+                and messages[-1].get("role") == "user"
+                and isinstance(messages[-1].get("content"), list)
+            ):
+                messages[-1]["content"].append(block)
+            else:
+                messages.append({"role": "user", "content": [block]})
+    return system_parts, messages
