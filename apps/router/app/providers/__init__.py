@@ -20,7 +20,15 @@ def build_providers(settings: Settings | None = None) -> dict[str, Provider]:
     mode = cfg.provider_mode.lower().strip()
 
     if mode == "mock":
-        return {"mock": MockProvider(latency_ms=cfg.mock_latency_ms)}
+        providers: dict[str, Provider] = {
+            "mock": MockProvider(latency_ms=cfg.mock_latency_ms)
+        }
+        if cfg.mock_peer_latency_ms is not None:
+            providers["mock-peer"] = MockProvider(
+                latency_ms=cfg.mock_peer_latency_ms,
+                name="mock-peer",
+            )
+        return providers
 
     if mode == "bedrock":
         return {"bedrock": BedrockProvider(region=cfg.aws_region)}

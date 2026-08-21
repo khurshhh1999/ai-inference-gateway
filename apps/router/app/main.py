@@ -38,7 +38,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="AI Inference Router",
-    version="0.14.0",
+    version="0.15.0",
     description="Routing engine for the AI Inference Gateway",
     lifespan=lifespan,
 )
@@ -133,6 +133,10 @@ async def health() -> JSONResponse:
                 "error_penalty_ms": settings.adaptive_error_penalty_ms,
                 "stale_after_seconds": settings.adaptive_stale_after_seconds,
                 "providers": engine.signals_snapshot(),
+            },
+            "hedge": {
+                "after_ms": settings.hedge_after_ms,
+                "enabled": settings.hedge_after_ms > 0,
             },
         }
     )

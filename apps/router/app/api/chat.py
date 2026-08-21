@@ -516,7 +516,7 @@ async def cache_stats() -> dict:
 
 @router.get("/v1/routing/stats")
 async def routing_stats() -> dict:
-    """Live EWMA latency / error signals used by adaptive routing."""
+    """Live EWMA latency / error signals used by adaptive routing, plus hedge config."""
     engine = get_routing_engine()
     return {
         "policy": settings.routing_policy,
@@ -525,6 +525,10 @@ async def routing_stats() -> dict:
         "min_samples": settings.adaptive_min_samples,
         "stale_after_seconds": settings.adaptive_stale_after_seconds,
         "latency_hints_ms": settings.latency_hints_ms,
+        "hedge": {
+            "after_ms": settings.hedge_after_ms,
+            "enabled": settings.hedge_after_ms > 0,
+        },
         "providers": engine.signals_snapshot(),
     }
 

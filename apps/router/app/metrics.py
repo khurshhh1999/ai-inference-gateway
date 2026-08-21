@@ -111,6 +111,24 @@ ADAPTIVE_SAMPLES = Gauge(
     labelnames=("provider",),
 )
 
+HEDGE_FIRED = Counter(
+    "router_hedge_fired_total",
+    "Hedge requests launched (secondary started while primary still in-flight)",
+    labelnames=("primary", "secondary"),
+)
+
+HEDGE_WON = Counter(
+    "router_hedge_won_total",
+    "Races where a hedge was in-flight and this role produced the kept response",
+    labelnames=("provider", "role"),
+)
+
+HEDGE_CANCELLED = Counter(
+    "router_hedge_cancelled_total",
+    "In-flight provider calls cancelled after the other racer succeeded",
+    labelnames=("provider",),
+)
+
 
 def observe_request(
     *,
@@ -175,6 +193,18 @@ def record_budget_rejection(window: str, metric: str) -> None:
 
 def record_route_decision(provider: str, reason: str) -> None:
     ROUTE_DECISIONS.labels(provider=provider, reason=reason[:64]).inc()
+
+
+def record_hedge_fired(primary: str, secondary: str) -> None:
+    HEDGE_FIRED.labels(primary=primary[:32], secondary=secondary[:32]).inc()
+
+
+def record_hedge_won(provider: str, role: str) -> None:
+    HEDGE_WON.labels(provider=provider[:32], role=role[:16]).inc()
+
+
+def record_hedge_cancelled(provider: str) -> None:
+    HEDGE_CANCELLED.labels(provider=provider[:32]).inc()
 
 
 def set_adaptive_gauges(

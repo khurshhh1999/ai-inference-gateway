@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -134,6 +135,21 @@ class Settings(BaseSettings):
     adaptive_error_penalty_ms: float = 1_000.0
     adaptive_min_samples: int = 1
     adaptive_stale_after_seconds: float = 30.0
+
+    # Hedged requests: if the first candidate is still in-flight after this
+    # delay, race the next one and keep the first success. 0 disables hedging
+    # (strict sequential failover). Distinct from adaptive ranking.
+    hedge_after_ms: int = 0
+    # Optional second mock (`mock-peer`) when PROVIDER_MODE=mock so local
+    # hedge demos do not need cloud credentials. Unset = single mock.
+    mock_peer_latency_ms: int | None = None
+
+    @field_validator("mock_peer_latency_ms", mode="before")
+    @classmethod
+    def _empty_mock_peer(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        return value
 
     # Logical model → provider-specific model ids
     model_map: str = (
