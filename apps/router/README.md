@@ -12,12 +12,15 @@ owns semantic caching (scan or HNSW-indexed), and enforces per-tenant USD/token 
 - **Adaptive:** live EWMA latency + error rate per provider; static `PROVIDER_LATENCY_MS`
   hints are the cold start. Idle providers (`ADAPTIVE_STALE_AFTER_SECONDS`) are probed
   again. Snapshot: `GET /v1/routing/stats`
+- **Hedge:** `HEDGE_AFTER_MS` (default `0` = off) races the next candidate if the first
+  is still in-flight. First success wins; `route_reason=hedged` when the secondary won.
+  Optional `MOCK_PEER_LATENCY_MS` registers `mock-peer` for local demos.
 - **Model map:** `MODEL_MAP` maps logical names like `gpt-proxy` to Bedrock Claude /
   Vertex Gemini ids. Catalog: `GET /v1/models` (and `GET /v1/models/{id}`).
 - **Modes:** `PROVIDER_MODE=mock|bedrock|vertex|multi` (default `mock` needs no cloud keys)
 
 Responses include `provider` and `route_reason` (`cost` / `latency` / `affinity` /
-`failover` / `adaptive`). Route decisions are also logged.
+`failover` / `adaptive` / `hedged`). Route decisions are also logged.
 
 ## Tool / function calling
 

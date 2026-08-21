@@ -3,7 +3,7 @@
 A multi-cloud **LLM inference gateway** that fronts **AWS Bedrock** and **GCP Vertex AI**
 behind one **OpenAI-shaped** API — with **semantic caching** (HNSW-indexed when Redis
 Query Engine is present), **streaming**, **per-tenant budgeting**, **edge rate limiting**,
-and **adaptive routing**.
+and **adaptive routing**, with optional **hedged requests** (`HEDGE_AFTER_MS`).
 
 Built to cut model spend and latency for multi-tenant AI products: target **~40% lower
 model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](load/RESULTS.md)).
@@ -49,6 +49,7 @@ model cost** and **~35% lower p95** on cacheable traffic (see [load/RESULTS.md](
 | Per-tenant API keys + USD/token budgets | Done |
 | Gateway per-key / per-tenant rate limiting | Done |
 | Adaptive routing (live EWMA latency / errors) | Done |
+| Hedged routing (race a secondary after `HEDGE_AFTER_MS`) | Done |
 | Prometheus metrics + Grafana + k6 p95 evidence | Done |
 | OpenTelemetry traces + `X-Request-Id` correlation | Done |
 | Multi-cloud deploy sketches (AWS + GCP + Helm) | Done |
@@ -222,7 +223,7 @@ chmod +x scripts/demo_tracing.sh
 Stable Prometheus names use `gateway_*` / `router_*` prefixes with explicit
 histogram buckets for p95. Grafana dashboard **AI Inference Gateway Overview**
 is provisioned under the `monitoring` profile (including adaptive EWMA latency
-and score, plus cache lookup candidates by backend); alerts cover error rate, miss p95, budget burn, and provider
+and score, hedged-request rates, plus cache lookup candidates by backend); alerts cover error rate, miss p95, budget burn, and provider
 errors (`monitoring/alerts.yml`). Jaeger is included in the same profile for
 distributed traces.
 
@@ -275,6 +276,29 @@ chmod +x scripts/demo_adaptive_routing.sh
 Live snapshot: `GET http://localhost:18081/v1/routing/stats`. Grafana
 (monitoring profile) has **Adaptive EWMA latency** and **Adaptive error
 rate + score**.
+
+### Hedged routing
+
+`HEDGE_AFTER_MS` (default `0` = off) races the next candidate if the first
+is still in-flight after that delay. The first success is kept and the other
+call is cancelled; `route_reason` is `hedged` when the secondary won.
+Primary failures still fail over immediately (no wait for the hedge timer).
+This is a tail-latency trade: a cancelled peer may have already started work,
+and only the kept completion is metered.
+
+Works on top of any `ROUTING_POLICY` (including `adaptive`). For a local
+demo without cloud credentials, register a second mock (`mock-peer`):
+
+```bash
+# Faster peer wins after the hedge delay:
+# MOCK_LATENCY_MS=150 MOCK_PEER_LATENCY_MS=15 HEDGE_AFTER_MS=40 \
+#   CACHE_ENABLED=false docker compose up --build
+
+chmod +x scripts/demo_hedged_routing.sh
+./scripts/demo_hedged_routing.sh
+```
+
+Grafana (monitoring profile) has **Hedged routing (fired / won / cancelled)**.
 
 ### Semantic cache demo
 
@@ -384,6 +408,8 @@ Copy `.env.example` → `.env`. Important variables:
 | `ADAPTIVE_EWMA_ALPHA` | `0.3` | Smoothing for live latency / error EWMA (`adaptive` policy) |
 | `ADAPTIVE_ERROR_PENALTY_MS` | `1000` | Added to score as `penalty * error_rate` (ms) |
 | `ADAPTIVE_STALE_AFTER_SECONDS` | `30` | Idle providers fall back to hints and are probed again |
+| `HEDGE_AFTER_MS` | `0` | Race next candidate if the first is still in-flight (`0` = off) |
+| `MOCK_PEER_LATENCY_MS` | (empty) | Optional second mock (`mock-peer`) for local hedge demos |
 | `MODEL_MAP` | (see `.env.example`) | Logical model → provider-specific ids |
 | `DEMO_API_KEY` | `demo-key-change-me` | Gateway API key (maps to tenant `default` if `TENANT_API_KEYS` unset) |
 | `TENANT_API_KEYS` | (empty) | `key:tenant,...` map for multi-tenant auth |

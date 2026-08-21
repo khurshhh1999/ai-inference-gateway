@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: AI Inference Gateway
-  version: 0.14.0
+  version: 0.15.0
   description: |
     OpenAI-shaped edge for multi-cloud LLM routing with chat completions
     (including tool / function calling), model listing, embeddings, semantic
-    cache, streaming, budgets, rate limiting, tracing, adaptive routing, and
-    indexed vector lookup.
+    cache, streaming, budgets, rate limiting, tracing, adaptive routing, hedged
+    requests, and indexed vector lookup.
 servers:
   - url: http://localhost:18080
 paths:
@@ -147,6 +147,9 @@ paths:
                   route_reason:
                     type: string
                     nullable: true
+                    description: >
+                      Why this provider was chosen (cost, latency, affinity,
+                      failover, adaptive, hedged, cache_hit).
                   cached:
                     type: boolean
                   choices:
