@@ -52,8 +52,22 @@ spec:
               value: {{ .Values.router.adaptiveEwmaAlpha | quote }}
             - name: ADAPTIVE_ERROR_PENALTY_MS
               value: {{ .Values.router.adaptiveErrorPenaltyMs | quote }}
+            - name: ADAPTIVE_MIN_SAMPLES
+              value: {{ .Values.router.adaptiveMinSamples | quote }}
             - name: ADAPTIVE_STALE_AFTER_SECONDS
               value: {{ .Values.router.adaptiveStaleAfterSeconds | quote }}
+            - name: PROVIDER_TIMEOUT_MS
+              value: {{ .Values.router.providerTimeoutMs | quote }}
+            - name: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+              value: {{ .Values.router.circuitBreakerFailureThreshold | quote }}
+            - name: CIRCUIT_BREAKER_RESET_MS
+              value: {{ .Values.router.circuitBreakerResetMs | quote }}
+            - name: HEDGE_AFTER_MS
+              value: {{ .Values.router.hedgeAfterMs | quote }}
+            {{- if .Values.router.mockPeerLatencyMs }}
+            - name: MOCK_PEER_LATENCY_MS
+              value: {{ .Values.router.mockPeerLatencyMs | quote }}
+            {{- end }}
             - name: MODEL_MAP
               value: {{ .Values.router.modelMap | quote }}
             - name: OTEL_ENABLED

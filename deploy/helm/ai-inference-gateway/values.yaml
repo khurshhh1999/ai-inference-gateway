@@ -61,7 +61,14 @@ router:
   redisUrl: redis://redis:6379/0
   adaptiveEwmaAlpha: "0.3"
   adaptiveErrorPenaltyMs: "1000"
+  adaptiveMinSamples: "1"
   adaptiveStaleAfterSeconds: "30"
+  providerTimeoutMs: "5000"
+  circuitBreakerFailureThreshold: "3"
+  circuitBreakerResetMs: "30000"
+  hedgeAfterMs: "0"
+  # Set e.g. "15" to register mock-peer for local hedge demos
+  mockPeerLatencyMs: ""
   modelMap: >-
     gpt-proxy=bedrock:anthropic.claude-3-haiku-20240307-v1:0,vertex:gemini-1.5-flash;mock-small=mock:mock-small
   otelEnabled: "true"

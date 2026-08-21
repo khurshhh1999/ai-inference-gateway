@@ -251,6 +251,29 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Hedged routing (fired / won / cancelled)",
+      "id": 17,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "targets": [
+        {
+          "expr": "sum(rate(router_hedge_fired_total[5m]))",
+          "legendFormat": "fired/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (role) (rate(router_hedge_won_total[5m]))",
+          "legendFormat": "won {{role}}/s",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(router_hedge_cancelled_total[5m]))",
+          "legendFormat": "cancelled/s",
+          "refId": "C"
+        }
+      ]
     }
   ],
   "refresh": "10s",
